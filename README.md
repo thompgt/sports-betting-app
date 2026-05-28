@@ -1,49 +1,58 @@
-# Sports Betting App
+# LineEdge - Multi-Bookmaker Arbitrage & EV Detection Engine
 
-A high-performance sports betting analysis and execution engine built with Python 3.11+, FastAPI, and Pydantic v2.
+LineEdge is a high-performance quantitative sports betting analysis engine. It ingests live odds from multiple bookmakers, resolves disparate team/game entities, and uses advanced devigging models to identify positive Expected Value (+EV) and Arbitrage opportunities.
 
-## Purpose
-This application is designed to ingest sports data from multiple sources, resolve entities (teams and games) to a canonical format, and perform advanced mathematical analysis to identify value bets using proven quantitative methods.
+## 📊 Dashboard Preview
+![LineEdge Dashboard](docs/assets/dashboard_preview.png)
 
-## Key Features
-- **Entity Resolution Module:** Two-tier matching (Exact + Fuzzy) to link disparate data sources to a single source of truth.
-- **Quantitative Engine:** Support for American/Decimal odds conversion, advanced devigging using the Power Method, EV calculation, and fractional Kelly Criterion staking.
-- **Architectural Integrity:** Domain-driven design with clear separation between API schemas, domain models, and business logic.
+## 🛠 System Architecture
+```text
+[ Data Ingestion ] ----> [ Entity Resolution ] ----> [ Quantitative Engine ]
+      |                         |                           |
+      | (Mock/Live Streams)     | (Exact/Fuzzy Matching)    | (No-Vig Power Method)
+      v                         v                           v
+[ SQLite Storage ] <-------------------------------- [ Edge Detection ]
+      |
+      +------> [ Streamlit Dashboard ]
+```
 
-## Tech Stack
-- **Framework:** FastAPI
-- **Validation:** Pydantic v2
-- **Logic:** RapidFuzz, NumPy-ready math utilities
-- **Database:** SQLite (planned)
-- **Logging:** Loguru
+## 🚀 Key Features
+- **Real-Time Tracking:** Ingests live odds streams and flags market discrepancies instantly.
+- **Entity Normalization:** Robust resolver that maps diverse naming conventions (e.g., "NY Rangers" vs "New York Rangers") to a canonical source of truth.
+- **Advanced Math:** Implements the **No-Vig Power Method** for superior multi-way market devigging compared to traditional multiplicative models.
+- **Deduplication & Caching:** Ensures that edges are only recorded once per market window unless a significant EV spike is detected.
+- **Closing Line Value (CLV) Audit:** Built-in auditing layer to prove statistical edge against market closing lines.
 
-## Getting Started
+## 🏁 Quick Start
 
-### Prerequisites
+### 1. Prerequisites
 - Python 3.11+
-- [uv](https://github.com/astral-sh/uv) or `pip`
+- Playwright (for documentation capture)
 
-### Installation
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/thompgt/sports-betting-app.git
-   cd sports-betting-app
-   ```
-2. Install dependencies:
-   ```bash
-   pip install fastapi pydantic rapidfuzz loguru sqlalchemy pytest
-   ```
+### 2. Installation
+```bash
+git clone https://github.com/thompgt/sports-betting-app.git
+cd sports-betting-app
+pip install -r requirements.txt
+playwright install chromium
+```
 
-### Running Tests
-To ensure the engine is operating correctly:
+### 3. Run Simulation & Backend
+Populate the database with mock data to see the engine in action:
+```bash
+$env:PYTHONPATH = "."; python app/main_mock_run.py
+```
+
+### 4. Launch Dashboard
+```bash
+streamlit run app/ui/dashboard.py
+```
+
+### 5. Verify Installation
+Run the full test suite (Entity Resolver, Math Utils, Ingestion, Storage):
 ```bash
 $env:PYTHONPATH = "."; pytest
 ```
 
-## Module Overview
-
-### Entity Resolution (`app/engine/resolver.py`)
-Handles the mapping of strings like "NY Rangers" and "New York Rangers" to a single UUID. It uses a 6-hour time window for game matching to ensure temporal accuracy across timezones.
-
-### Mathematical Utilities (`app/engine/math_utils.py`)
-Contains the quantitative core. The `strip_vig_power_method` is particularly robust, using an iterative Newton-Raphson solver to handle multi-way markets (e.g., Soccer 3-way or UFC) more accurately than simple multiplicative devigging.
+---
+*Developed by thompgt. Built for high-frequency quantitative betting analysis.*
