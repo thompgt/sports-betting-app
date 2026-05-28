@@ -1,0 +1,76 @@
+[
+  {
+    "id": "event_001",
+    "sport_key": "icehockey_nhl",
+    "commence_time": "2026-05-27T20:00:00Z",
+    "home_team": "New York Rangers",
+    "away_team": "Los Angeles Lakers",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-05-27T19:50:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "New York Rangers", "price": -110},
+              {"name": "Los Angeles Lakers", "price": -110}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-05-27T19:51:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "New York Rangers", "price": -105},
+              {"name": "Los Angeles Lakers", "price": -115}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "betmgm",
+        "title": "BetMGM",
+        "last_update": "2026-05-27T19:52:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "New York Rangers", "price": 115},
+              {"name": "Los Angeles Lakers", "price": -135}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "event_002",
+    "sport_key": "basketball_nba",
+    "commence_time": "2026-05-27T22:00:00Z",
+    "home_team": "NY Knicks",
+    "away_team": "Boston Celtics",
+    "bookmakers": [
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-05-27T19:55:00Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "NY Knicks", "price": 150},
+              {"name": "Boston Celtics", "price": -170}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

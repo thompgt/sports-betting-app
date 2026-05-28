@@ -86,10 +86,20 @@ class EntityResolver:
         if not home_id or not away_id:
             return None
             
+        # Ensure event_time is offset-naive for comparison if game.start_time is naive
+        # Or better, normalize both to UTC if they have zones
+        normalized_event_time = event_time
+        if event_time.tzinfo is not None:
+            normalized_event_time = event_time.replace(tzinfo=None)
+
         for game in self.games:
             if game.home_team_id == home_id and game.away_team_id == away_id:
+                normalized_game_start = game.start_time
+                if game.start_time.tzinfo is not None:
+                    normalized_game_start = game.start_time.replace(tzinfo=None)
+
                 # 6-hour window check (21600 seconds)
-                time_diff = abs((game.start_time - event_time).total_seconds())
+                time_diff = abs((normalized_game_start - normalized_event_time).total_seconds())
                 if time_diff <= 21600:
                     return game.id
                     
