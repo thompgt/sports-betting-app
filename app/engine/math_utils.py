@@ -29,25 +29,25 @@ def strip_vig_power_method(probabilities: List[float], max_iterations: int = 100
     Reference: Shin/Power method for devigging multi-way markets.
     """
     overround = sum(probabilities)
-    if overround <= 1.0:
-        # No vig or already fair; return as is or normalize if exactly 1.0
-        if math.isclose(overround, 1.0, rel_tol=1e-9):
-            return probabilities
-        raise ValueError(f"Total implied probability must be > 1.0 to devig (got {overround}).")
+    if overround < 1.0:
+        # If probabilities are less than 1.0, they are already "fair" or undervalued
+        return [p / overround for p in probabilities]
+    
+    if math.isclose(overround, 1.0, rel_tol=1e-12):
+        return probabilities
 
     # Initial guess for k
-    k = 1.0
-    if overround > 1.0:
-        # Use log(n)/log(sum(p_i)) as a better starting point for k
-        n = len(probabilities)
-        k = math.log(n) / math.log(overround) if overround > 0 else 1.0
-
+    n = len(probabilities)
+    # k = 1.0 is the identity. If overround > 1.0, k will be > 1.0
+    k = 1.0 
+    
     # Newton-Raphson to solve f(k) = sum(p_i^k) - 1 = 0
     for _ in range(max_iterations):
         # Clip k to prevent OverflowError in p**k
-        # Since p < 1, very large k -> 0, very small k -> infinity
-        # Usually k is between 1 and 20 for sports markets.
-        k = max(0.1, min(k, 100.0))
+        # p is always <= 1.0 (implied prob), so p**k won't overflow for k > 0
+        # However, if p is extremely small and k is small, it's fine.
+        # If p is extremely small and k is large, p**k -> 0.
+        k = max(1e-5, min(k, 1000.0))
         
         f_k = sum(p**k for p in probabilities) - 1.0
         f_prime_k = sum(p**k * math.log(p) for p in probabilities if p > 0)
