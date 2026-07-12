@@ -42,7 +42,9 @@ def test_edge_auditor_close_out(db_manager):
     session.commit()
     
     auditor = EdgeAuditor(session)
-    auditor.close_out_market("game_abc", 1.88)
-    
+    auditor.close_out_market("game_abc", "h2h", "FanDuel", 1.88)
+
     updated_edge = session.query(DetectedEdge).filter_by(canonical_game_id="game_abc").first()
     assert updated_edge.is_active is False
+    assert updated_edge.closing_line == 1.88
+    assert updated_edge.clv_pct is not None

@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine
-import os
+
+from app.core.config import get_settings
 
 # Page Config
 st.set_page_config(page_title="LineEdge - Sports Betting Analytics", layout="wide")
 
-# Database Connection
-DB_PATH = os.path.join(os.path.dirname(__file__), "../../mock_simulation.db")
-engine = create_engine(f"sqlite:///{DB_PATH}")
+# Database Connection (same DB the detection service writes to)
+settings = get_settings()
+engine = create_engine(settings.db_url)
 
 def load_data():
     try:
@@ -76,17 +77,21 @@ else:
 
     with tab3:
         st.subheader("Closing Line Value (CLV) Analysis")
-        st.markdown("This section tracks how our predicted 'Fair Odds' compare to the market's final closing lines.")
-        
-        # Simulate CLV data (in a real app, this would be updated by the EdgeAuditor)
-        clv_df = df.copy()
-        # Mock closing odds that are slightly closer to fair than offered
-        clv_df['closing_odds'] = clv_df['fair_odds'] + (clv_df['odds_offered'] - clv_df['fair_odds']) * 0.2
-        
-        fig_clv = px.scatter(
-            clv_df, x='fair_odds', y='closing_odds', 
-            trendline="ols",
-            title="Fair Price vs Market Closing Price"
-        )
-        st.plotly_chart(fig_clv, use_container_width=True)
-        st.write("A strong correlation here proves that our devigging engine identifies the 'True' market price before the books adjust.")
+        st.markdown("This section tracks how our predicted 'Fair Odds' compare to the market's final closing lines, recorded by the EdgeAuditor once each game starts.")
+
+        clv_df = df[df['closing_line'].notna()].copy()
+
+        if clv_df.empty:
+            st.info("No closed-out markets yet. CLV data appears once games in the database have started and the detection service has run a poll cycle.")
+        else:
+            col1, col2 = st.columns(2)
+            col1.metric("Markets Closed Out", len(clv_df))
+            col2.metric("Avg CLV%", f"{clv_df['clv_pct'].mean():.2%}")
+
+            fig_clv = px.scatter(
+                clv_df, x='fair_odds', y='closing_line',
+                trendline="ols",
+                title="Fair Price vs Market Closing Price"
+            )
+            st.plotly_chart(fig_clv, use_container_width=True)
+            st.write("A strong correlation here proves that our devigging engine identifies the 'True' market price before the books adjust.")

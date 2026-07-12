@@ -6,14 +6,16 @@ LineEdge is a high-performance quantitative sports betting analysis engine. It i
 ![LineEdge Dashboard](docs/assets/dashboard_preview.png)
 
 ## 🛠 System Architecture
+LineEdge runs as a continuous service — like an algorithmic trading bot's poll/decide loop, minus order execution. See [`docs/architecture.md`](docs/architecture.md) for the full breakdown.
 ```text
-[ Data Ingestion ] ----> [ Entity Resolution ] ----> [ Quantitative Engine ]
-      |                         |                           |
-      | (Mock/Live Streams)     | (Exact/Fuzzy Matching)    | (No-Vig Power Method)
-      v                         v                           v
-[ SQLite Storage ] <-------------------------------- [ Edge Detection ]
-      |
-      +------> [ Streamlit Dashboard ]
+[ OddsProvider ] --poll interval--> [ Entity Resolution ] --> [ Quantitative Engine ]
+                                            |                         |
+                                    (Exact/Fuzzy Matching)   (No-Vig Power Method)
+                                            v                         v
+[ SQLite Storage ] <---------------------------------------- [ Edge Detection ]
+      |                     |
+      v                     v
+[ Streamlit Dashboard ]  [ EdgeAuditor: CLV closeout on game start ]
 ```
 
 ## 🚀 Key Features
@@ -37,10 +39,14 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 3. Run Simulation & Backend
-Populate the database with mock data to see the engine in action:
+### 3. Run the Detection Service
+Start the continuous poll/detect/persist loop (mock provider by default):
 ```bash
-$env:PYTHONPATH = "."; python app/main_mock_run.py
+$env:PYTHONPATH = "."; python app/main.py
+```
+Or run a single poll cycle and exit (useful for smoke tests):
+```bash
+$env:PYTHONPATH = "."; python app/main.py --once
 ```
 
 ### 4. Launch Dashboard
