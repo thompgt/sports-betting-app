@@ -54,7 +54,7 @@ else:
                     'odds_offered': '{:.2f}',
                     'fair_odds': '{:.2f}'
                 }).background_gradient(subset=['calculated_ev'], cmap='Greens'),
-                use_container_width=True
+                width='stretch'
             )
         else:
             st.info("No active edges currently detected.")
@@ -65,7 +65,7 @@ else:
         # Edges over time
         df_time = df.set_index('timestamp_detected').resample('h').size().reset_index(name='count')
         fig_time = px.line(df_time, x='timestamp_detected', y='count', title="Edges Detected Over Time")
-        st.plotly_chart(fig_time, use_container_width=True)
+        st.plotly_chart(fig_time, width='stretch')
         
         # Edges by sport
         fig_sport = px.bar(
@@ -73,7 +73,7 @@ else:
             x='sport', y='count', color='sport',
             title="Total Edges Found by Sport"
         )
-        st.plotly_chart(fig_sport, use_container_width=True)
+        st.plotly_chart(fig_sport, width='stretch')
 
     with tab3:
         st.subheader("Closing Line Value (CLV) Analysis")
@@ -93,5 +93,15 @@ else:
                 trendline="ols",
                 title="Fair Price vs Market Closing Price"
             )
-            st.plotly_chart(fig_clv, use_container_width=True)
-            st.write("A strong correlation here proves that our devigging engine identifies the 'True' market price before the books adjust.")
+            st.plotly_chart(fig_clv, width='stretch')
+            st.caption(
+                "Tight clustering along a line means the devigged fair price tracked where the "
+                "market actually settled. CLV is a leading indicator of edge, not settled-bet "
+                "P&L: it says nothing about whether these bets would have won."
+            )
+
+            fig_hist = px.histogram(
+                clv_df, x='clv_pct', nbins=20,
+                title="Distribution of Closing Line Value"
+            )
+            st.plotly_chart(fig_hist, width='stretch')
