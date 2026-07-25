@@ -15,6 +15,7 @@ class DetectedEdge(Base):
     sport: Mapped[str] = mapped_column(String)
     market_type: Mapped[str] = mapped_column(String)
     bookmaker_name: Mapped[str] = mapped_column(String)
+    outcome_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     odds_offered: Mapped[float] = mapped_column(Float)
     fair_odds: Mapped[float] = mapped_column(Float)
     calculated_ev: Mapped[float] = mapped_column(Float)

@@ -47,7 +47,7 @@ else:
             # Styled Table
             st.dataframe(
                 active_edges[[
-                    'timestamp_detected', 'sport', 'bookmaker_name', 
+                    'timestamp_detected', 'sport', 'bookmaker_name', 'outcome_name',
                     'odds_offered', 'fair_odds', 'calculated_ev'
                 ]].style.format({
                     'calculated_ev': '{:.2%}',
@@ -63,7 +63,7 @@ else:
         st.subheader("Edge Detection Performance")
         
         # Edges over time
-        df_time = df.set_index('timestamp_detected').resample('H').size().reset_index(name='count')
+        df_time = df.set_index('timestamp_detected').resample('h').size().reset_index(name='count')
         fig_time = px.line(df_time, x='timestamp_detected', y='count', title="Edges Detected Over Time")
         st.plotly_chart(fig_time, use_container_width=True)
         

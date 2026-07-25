@@ -59,7 +59,10 @@ class EdgeDetectionService:
         self.db_manager = db_manager
         self.settings = settings
         self.edge_cache = EdgeCache(settings.edge_cache_ttl_minutes, settings.edge_cache_spike_threshold)
-        self._last_odds_seen: Dict[Tuple[str, str, str], float] = {}
+        # (game_id, market, bookmaker, outcome) -> most recently seen decimal price.
+        # Keyed per outcome so the closing line compared against an edge is the price
+        # of the same side of the market.
+        self._last_odds_seen: Dict[Tuple[str, str, str, str], float] = {}
         self._closed_games: Set[str] = set()
 
     async def run_forever(self) -> None:
@@ -111,7 +114,7 @@ class EdgeDetectionService:
                     all_outcomes_probs.append(implied_probs)
 
                     for outcome_name, price in outcomes.items():
-                        self._last_odds_seen[(str(game_id), market_key, bookmaker.title)] = price
+                        self._last_odds_seen[(str(game_id), market_key, bookmaker.title, outcome_name)] = price
                 except Exception as e:
                     logger.error("Error processing odds for %s: %s", bookmaker.title, e)
 
@@ -140,6 +143,7 @@ class EdgeDetectionService:
                                     sport=event.sport_key,
                                     market_type=market_key,
                                     bookmaker_name=bookie_name,
+                                    outcome_name=outcome_name,
                                     odds_offered=price,
                                     fair_odds=fair_decimals[i],
                                     calculated_ev=ev
@@ -160,8 +164,8 @@ class EdgeDetectionService:
             if game_id in self._closed_games or game.start_time > now:
                 continue
 
-            for (seen_game_id, market, bookie), price in self._last_odds_seen.items():
+            for (seen_game_id, market, bookie, outcome), price in self._last_odds_seen.items():
                 if seen_game_id == game_id:
-                    auditor.close_out_market(game_id, market, bookie, price)
+                    auditor.close_out_market(game_id, market, bookie, price, outcome_name=outcome)
 
             self._closed_games.add(game_id)
