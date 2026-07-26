@@ -24,7 +24,7 @@
 use edge_book::book::OrderBook;
 use edge_book::order::{Fill, TimeInForce};
 use edge_core::market::{MarketSpec, MarketStatus};
-use edge_core::types::{MarketId, OrderId, Price, Prob, Qty, Side, StrategyId, Ts};
+use edge_core::types::{EventId, Leg, MarketId, OrderId, Price, Prob, Qty, Side, StrategyId, Ts};
 use std::borrow::Cow;
 use std::fmt;
 
@@ -165,6 +165,35 @@ impl MarketView<'_> {
     }
 }
 
+/// Every market resolving on one event, seen together.
+///
+/// A separate view because arbitrage is not a per-market question. The YES leg
+/// on one venue and the NO leg on another are one position, and a strategy that
+/// can only see them one at a time cannot tell the difference between an
+/// arbitrage and two unrelated bets. Strategies that do not care about this
+/// simply do not implement [`Strategy::on_event`].
+#[derive(Debug, Clone, Copy)]
+pub struct EventView<'a> {
+    pub event: EventId,
+    /// One entry per market on the event, across every venue.
+    pub markets: &'a [MarketView<'a>],
+    pub bankroll: f64,
+    pub now: Ts,
+}
+
+impl<'a> EventView<'a> {
+    /// Markets carrying the given leg, in the order supplied.
+    pub fn leg(&self, leg: Leg) -> impl Iterator<Item = &MarketView<'a>> {
+        self.markets.iter().filter(move |m| m.spec.leg == leg)
+    }
+
+    /// Whether every market on the event is currently tradable. Arbitrage is
+    /// worthless if only one side of it can be executed.
+    pub fn all_tradable(&self) -> bool {
+        !self.markets.is_empty() && self.markets.iter().all(|m| m.is_tradable())
+    }
+}
+
 /// A strategy's request. Never an instruction — the risk engine may resize or
 /// refuse any of these.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,6 +311,13 @@ pub trait Strategy: Send {
     /// overwhelmingly common case — costs nothing.
     fn on_market(&mut self, view: &MarketView<'_>, out: &mut Vec<Action>);
 
+    /// React to every market on one event at once.
+    ///
+    /// Defaulted to nothing because only the cross-market strategies need it,
+    /// and a per-market strategy given an event view would be tempted to
+    /// double-act on markets it has already seen.
+    fn on_event(&mut self, _view: &EventView<'_>, _out: &mut Vec<Action>) {}
+
     /// A fill involving this strategy. `is_maker` says which side of it the
     /// strategy was on.
     fn on_fill(&mut self, _fill: &Fill, _is_maker: bool) {}
@@ -359,9 +395,15 @@ pub(crate) mod harness {
 
     impl Sim {
         pub fn new() -> Self {
+            Self::for_market(M, EventId(0), VenueId(1))
+        }
+
+        /// A market with a chosen identity, for tests that need several books
+        /// on one event.
+        pub fn for_market(market: MarketId, event: EventId, venue: VenueId) -> Self {
             Sim {
-                book: OrderBook::new(M, 10_000),
-                spec: MarketSpec::new(M, EventId(0), VenueId(1), "TEST"),
+                book: OrderBook::new(market, 10_000),
+                spec: MarketSpec::new(market, event, venue, "TEST"),
                 resting: Vec::new(),
                 position: Qty::ZERO,
                 avg_cost: 0.0,
@@ -377,8 +419,9 @@ pub(crate) mod harness {
             self.next += 1;
             let id = OrderId(self.next);
             let mut out = Vec::new();
+            let market = self.book.market();
             self.book.submit(
-                Order::limit(id, M, StrategyId(99), side, Price::from_cents(cents), Qty(qty)),
+                Order::limit(id, market, StrategyId(99), side, Price::from_cents(cents), Qty(qty)),
                 &mut self.seq,
                 &mut out,
             );
