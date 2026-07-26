@@ -12,10 +12,14 @@
 
 pub mod bitset;
 pub mod book;
+pub mod engine;
+pub mod latency;
 pub mod order;
 
 pub use bitset::TickBitset;
 pub use book::{LevelView, OrderBook};
+pub use engine::{Command, EngineStats, MatchingEngine};
+pub use latency::{LatencyHistogram, LatencySnapshot};
 pub use order::{
     BookEvent, Fill, Order, OrderType, RejectReason, SelfTradePrevention, TimeInForce,
 };
