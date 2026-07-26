@@ -420,6 +420,22 @@ pub(crate) mod harness {
         }
     }
 
+    /// Build a feature vector from named values, leaving the rest at zero.
+    /// Tests should say `[("z_score", 2.5)]` rather than counting array slots.
+    pub fn feats(mid: f64, pairs: &[(&str, f64)]) -> Features {
+        let mut v = [0.0; crate::features::N_FEATURES];
+        v[0] = mid;
+        v[crate::features::N_FEATURES - 1] = 1.0;
+        for (name, value) in pairs {
+            let i = crate::features::FEATURE_NAMES
+                .iter()
+                .position(|n| n == name)
+                .unwrap_or_else(|| panic!("no such feature: {name}"));
+            v[i] = *value;
+        }
+        Features::from_values(v, mid)
+    }
+
     pub fn places(actions: &[Action]) -> Vec<OrderIntent> {
         actions.iter().filter_map(|a| a.intent().cloned()).collect()
     }
