@@ -34,6 +34,8 @@
 
 pub mod features;
 pub mod predictor;
+pub mod strategy;
 
 pub use features::{FEATURE_NAMES, FeatureExtractor, Features, N_FEATURES};
 pub use predictor::{Prediction, Predictor, PredictorConfig, Standardizer};
+pub use strategy::{Action, MarketView, OrderIntent, RestingOrder, Strategy, StrategyStats};
