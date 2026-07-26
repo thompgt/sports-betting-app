@@ -1,0 +1,13 @@
+[package]
+name = "edge-risk"
+description = "Position accounting, pre-trade risk limits, VaR and the kill switch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+edge-core = { workspace = true }
+serde = { workspace = true }
