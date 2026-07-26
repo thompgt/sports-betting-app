@@ -20,11 +20,12 @@ pub enum Liquidity {
     Taker,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FeeModel {
     /// No trading fee. The correct model for a paper-trading sanity check and
     /// for venues that charge only on settlement.
+    #[default]
     None,
 
     /// Kalshi's published schedule: `fee = ceil(rate × C × P × (1 − P))` in
@@ -45,12 +46,6 @@ pub enum FeeModel {
     /// Charging this at trade time would overstate the cost of a losing
     /// position, so it is deliberately zero here and applied in settlement.
     WinningsOnly { rate: f64 },
-}
-
-impl Default for FeeModel {
-    fn default() -> Self {
-        FeeModel::None
-    }
 }
 
 impl FeeModel {
