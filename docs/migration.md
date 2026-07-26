@@ -44,12 +44,12 @@ about the code that will actually run.
 
 | # | Component | State |
 |---|---|---|
-| 1 | `edge-core` — types, odds, devig, consensus, fees, EV/Kelly, stats | ✅ done, 91 tests |
-| 2 | `edge-book` — order book and matching engine | ⏳ |
-| 3 | `edge-book` — LMSR and CPMM | ⏳ |
-| 4 | `edge-risk` — limits, VaR, sizing, drawdown | ⏳ |
-| 5 | `edge-alpha` — strategy framework and strategies | ⏳ |
-| 6 | `edge-alpha` — online price predictor | ⏳ |
+| 1 | `edge-core` — types, odds, devig, consensus, fees, EV/Kelly, stats | ✅ done, 103 tests |
+| 2 | `edge-book` — order book and matching engine | ✅ done, 88 tests |
+| 3 | `edge-book` — LMSR and CPMM | ✅ done |
+| 4 | `edge-risk` — limits, VaR, sizing, drawdown | ✅ done, 68 tests |
+| 5 | `edge-alpha` — strategy framework and strategies | ✅ done, 106 tests |
+| 6 | `edge-alpha` — online price predictor | ✅ done |
 | 7 | `edge-data` — ingestion and venue adapters | ⏳ |
 | 8 | `edge-data` — persistence and event journal | ⏳ |
 | 9 | `edge-engine` — runtime | ⏳ |
