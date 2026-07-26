@@ -6,6 +6,16 @@ It is structured like an algorithmic trading bot's poll/decide loop, minus order
 
 > **All market data in this repository is SIMULATED.** There is no bookmaker integration. See [Limitations](#limitations).
 
+> ### 🚧 Migration in progress: Python → Rust
+>
+> LineEdge is being rebuilt as **Edge**, a Rust trading engine for prediction
+> markets (Kalshi, Polymarket) that goes beyond detection to order management,
+> execution and risk. The Rust workspace lives in [`crates/`](crates/); the
+> Python service documented below still runs and is the reference implementation
+> until the migration completes. Build the Rust side with `cargo test`.
+>
+> Progress is tracked in [`docs/migration.md`](docs/migration.md).
+
 ![LineEdge Dashboard](docs/assets/dashboard_preview.png)
 
 ---

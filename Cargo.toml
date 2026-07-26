@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/thompgt/sports-betting-app"
+authors = ["Thomas Pequegnot"]
+
+[workspace.dependencies]
+edge-core = { path = "crates/edge-core" }
+edge-book = { path = "crates/edge-book" }
+edge-risk = { path = "crates/edge-risk" }
+edge-alpha = { path = "crates/edge-alpha" }
+edge-data = { path = "crates/edge-data" }
+edge-engine = { path = "crates/edge-engine" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# Release builds are what the engine actually runs under; the quant hot path is
+# unusably slow in a debug build, so keep the optimised profile aggressive.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+
+# Benchmarks and the backtester are run often enough during development that a
+# plain debug build is painful. This keeps optimisation with fast compiles.
+[profile.dev.package."*"]
+opt-level = 2
