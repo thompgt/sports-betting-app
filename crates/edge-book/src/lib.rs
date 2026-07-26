@@ -10,12 +10,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
+pub mod amm;
 pub mod bitset;
 pub mod book;
 pub mod engine;
 pub mod latency;
 pub mod order;
 
+pub use amm::{AmmTrade, Cpmm, Lmsr, MarketMaker};
 pub use bitset::TickBitset;
 pub use book::{LevelView, OrderBook};
 pub use engine::{Command, EngineStats, MatchingEngine};
