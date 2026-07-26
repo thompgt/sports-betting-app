@@ -1,0 +1,18 @@
+[package]
+name = "edge-alpha"
+description = "Microstructure features, online price prediction, and trading strategies"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+edge-core = { workspace = true }
+edge-book = { workspace = true }
+edge-risk = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

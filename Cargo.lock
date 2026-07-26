@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "edge-alpha"
+version = "0.1.0"
+dependencies = [
+ "edge-book",
+ "edge-core",
+ "edge-risk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "edge-book"
 version = "0.1.0"
 dependencies = [
