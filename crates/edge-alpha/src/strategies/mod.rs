@@ -6,5 +6,7 @@
 //! theirs.
 
 pub mod quoting;
+pub mod value;
 
 pub use quoting::{QuoteConfig, QuoteMaker};
+pub use value::{ValueConfig, ValueTaker};

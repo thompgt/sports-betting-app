@@ -130,6 +130,24 @@ impl MarketView<'_> {
         self.book.mid().map(|m| Prob::clamped(m.dollars()))
     }
 
+    /// Fair value from evidence that is **independent of this market's own
+    /// price** — a model that has earned weight, or cross-venue consensus.
+    ///
+    /// Distinct from [`Self::fair`], which falls back to the mid. That fallback
+    /// is right for a maker deciding where to quote and catastrophic for a taker
+    /// deciding whether to cross: comparing the mid against the touch always
+    /// shows half a spread of "edge", so a taker using it crosses continuously
+    /// and pays the spread for the privilege. Anything that takes liquidity must
+    /// use this and refuse to trade when it returns `None`.
+    pub fn independent_fair(&self) -> Option<Prob> {
+        if let Some(p) = self.prediction
+            && !p.is_market_echo()
+        {
+            return Some(p.fair);
+        }
+        self.consensus
+    }
+
     /// Whether this market can be traded at all right now. Checked by every
     /// strategy before anything else, because quoting a halted or closed market
     /// is a pure source of rejections.
