@@ -24,6 +24,7 @@ pub mod backoff;
 pub mod breaker;
 pub mod error;
 pub mod limiter;
+pub mod time;
 
 pub use backoff::{Backoff, Decision, Jitter, Retry, RetryPolicy};
 pub use breaker::{BreakerConfig, CircuitBreaker, State as BreakerState};
