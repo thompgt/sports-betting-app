@@ -6,3 +6,4 @@ logs/
 .env
 *.egg-info/
 .demo_tmp/
+.ipynb_checkpoints/
