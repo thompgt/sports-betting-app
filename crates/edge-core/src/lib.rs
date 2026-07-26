@@ -59,10 +59,12 @@ pub mod ev;
 pub mod fees;
 pub mod market;
 pub mod odds;
+pub mod rng;
 pub mod stats;
 pub mod types;
 
 pub use error::{EdgeError, Result};
+pub use rng::Rng;
 pub use types::{
     ClientOrderId, EventId, Leg, MarketId, Notional, OrderId, Price, Prob, Qty, Side, StrategyId,
     Ts, VenueId,
