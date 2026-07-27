@@ -24,6 +24,7 @@ pub mod backoff;
 pub mod breaker;
 pub mod error;
 pub mod limiter;
+pub mod resolve;
 pub mod similarity;
 pub mod time;
 
