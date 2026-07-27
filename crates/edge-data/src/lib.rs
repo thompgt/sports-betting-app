@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
+pub mod assembler;
 pub mod backoff;
 pub mod breaker;
 pub mod error;
