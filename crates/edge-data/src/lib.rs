@@ -29,6 +29,7 @@ pub mod resolve;
 pub mod similarity;
 pub mod source;
 pub mod time;
+pub mod venues;
 
 pub use backoff::{Backoff, Decision, Jitter, Retry, RetryPolicy};
 pub use breaker::{BreakerConfig, CircuitBreaker, State as BreakerState};
