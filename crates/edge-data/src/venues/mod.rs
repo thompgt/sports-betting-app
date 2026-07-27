@@ -6,6 +6,8 @@
 //! most likely to be wrong — the translation — is testable against recorded
 //! payloads without a network.
 
+pub mod kalshi;
 pub mod sim;
 
+pub use kalshi::Kalshi;
 pub use sim::{SimConfig, Simulator};

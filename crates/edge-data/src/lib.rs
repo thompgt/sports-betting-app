@@ -24,6 +24,7 @@ pub mod assembler;
 pub mod backoff;
 pub mod breaker;
 pub mod error;
+pub mod http;
 pub mod limiter;
 pub mod resolve;
 pub mod similarity;
