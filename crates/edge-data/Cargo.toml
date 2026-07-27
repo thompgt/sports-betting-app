@@ -14,5 +14,11 @@ edge-book = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "time", "sync", "net"] }
+async-trait = "0.1.91"
+futures-util = "0.3.33"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "charset", "http2", "native-tls"] }
+tokio-tungstenite = { version = "0.30.0", features = ["native-tls"] }
 
 [dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time", "test-util"] }

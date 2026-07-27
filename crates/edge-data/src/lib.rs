@@ -26,6 +26,7 @@ pub mod error;
 pub mod limiter;
 pub mod resolve;
 pub mod similarity;
+pub mod source;
 pub mod time;
 
 pub use backoff::{Backoff, Decision, Jitter, Retry, RetryPolicy};
