@@ -4,6 +4,15 @@ LineEdge is a continuously-running quantitative edge-detection service for sport
 
 It is structured like an algorithmic trading bot's poll/decide loop, minus order execution. **LineEdge never places a bet.** Its output is rows in SQLite and a dashboard.
 
+## Tech Stack
+
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
+![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=for-the-badge&logo=plotly&logoColor=white)
+
 > **All market data in this repository is SIMULATED.** There is no bookmaker integration. See [Limitations](#limitations).
 
 > ### 🚧 Migration in progress: Python → Rust
