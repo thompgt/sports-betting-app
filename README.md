@@ -1,10 +1,6 @@
-# LineEdge — Multi-Bookmaker Arbitrage & EV Detection Engine
+# LineEdge / Edge — Quantitative Edge Detection and Prediction-Market Trading Engine
 
-LineEdge is a continuously-running quantitative edge-detection service for sports betting markets. It polls odds from multiple bookmakers, resolves inconsistent team/game naming onto canonical entities, strips bookmaker margin with a **No-Vig Power Method** devigger, and surfaces positive expected value (+EV) and arbitrage opportunities — then audits itself against the closing line.
-
-It is structured like an algorithmic trading bot's poll/decide loop, minus order execution. **LineEdge never places a bet.** Its output is rows in SQLite and a dashboard.
-
-## Tech Stack
+A running Python service that devigs multi-bookmaker odds and surfaces +EV and arbitrage opportunities, plus a Rust workspace rebuilding it as a full prediction-market trading engine with an order book, risk layer and strategy framework.
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white)
@@ -13,60 +9,153 @@ It is structured like an algorithmic trading bot's poll/decide loop, minus order
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=for-the-badge&logo=plotly&logoColor=white)
 
-> **All market data in this repository is SIMULATED.** There is no bookmaker integration. See [Limitations](#limitations).
-
-> ### 🚧 Migration in progress: Python → Rust
->
-> LineEdge is being rebuilt as **Edge**, a Rust trading engine for prediction
-> markets (Kalshi, Polymarket) that goes beyond detection to order management,
-> execution and risk. The Rust workspace lives in [`crates/`](crates/); the
-> Python service documented below still runs and is the reference implementation
-> until the migration completes. Build the Rust side with `cargo test`.
->
-> Progress is tracked in [`docs/migration.md`](docs/migration.md).
+> **All market data in this repository is SIMULATED.** There is no live bookmaker
+> integration and no bet is ever placed. See [Limitations](#limitations).
 
 ![LineEdge Dashboard](docs/assets/dashboard_preview.png)
 
 ---
 
-## Table of contents
+## Why this matters
 
-- [How it works](#how-it-works)
-- [System architecture](#system-architecture)
-- [Key features](#key-features)
-- [Screenshots](#screenshots)
-- [Demo notebook](#demo-notebook)
-- [Setup](#setup)
-- [Running it](#running-it)
-- [Testing](#testing)
-- [Project layout](#project-layout)
-- [Limitations](#limitations)
+A bookmaker's quoted prices imply probabilities that sum to **more than 1**. The excess is their margin — the overround, or "vig". Before you can say whether a price is good, you have to strip that margin out, and the obvious way of doing it (divide every probability by the sum) is biased: it leaves too much probability on longshots and manufactures phantom edges on favourites. Getting that one step right, consistently, across venues that all name the same game differently, is most of the problem.
+
+That makes this a concrete instance of a general engineering problem: **taking noisy, inconsistently-labelled, adversarially-priced data from several sources and turning it into one calibrated number you would act on.** The same shape appears in market data pipelines, forecast aggregation, and any system that has to reconcile disagreeing external feeds.
+
+The stakes are also a good teacher of honesty. A detector that reports gross edges looks impressive and loses money: on a 50c prediction-market contract, Kalshi's taker fee alone is 1.75c, which exceeds the entire edge on most opportunities a scanner surfaces. So the system measures itself two ways it cannot fake — **expected value computed net of fees**, and **Closing Line Value**, the standard check on whether a flagged price actually beat where the market settled.
+
+The Rust rebuild exists because detection is where a scanner stops and a trading system starts. Writing down an edge is easy; sizing it under estimation error, keeping it inside pre-trade risk limits, routing it, and being able to prove a backtest ran the same code as production is the part that decides whether any of it is real.
 
 ---
 
-## How it works
+## Skills demonstrated
 
-A bookmaker's quoted prices imply probabilities that sum to **more than 1**. The excess is their margin (the overround, or "vig"). To judge whether a price is good you first have to strip that margin out.
+**Quantitative / numerical**
 
-LineEdge devigs with the **power method**: find the exponent `k` such that
+- Four devigging models — multiplicative, **power method** (`Σ p_i^k = 1`), **Shin** (solving for the implied insider fraction `z`), and additive — with bracketed solvers in Rust that cannot diverge, and a Newton–Raphson implementation in Python.
+- **Log-odds (logit) pooling** of multiple venues into one fair value, devigging each source *before* pooling, and returning pool dispersion as a first-class output.
+- **Fractional Kelly sizing shrunk for estimation error**, fed by that dispersion, with a hard cap on any single position.
+- **Monte Carlo VaR/CVaR** over Bernoulli resolution outcomes with shared latent draws for same-event markets and a common factor across events — because a normal approximation describes a different distribution than a binary payoff and thins exactly the tail it is meant to measure.
+- Streaming estimators built for a hot path: Welford variance, EWMA, rolling windows, Brier/log scoring rules.
+- **Online learning**: AdaGrad logistic regression on log loss that predicts the *residual* against the market logit, with Platt-style online calibration and a blend weight gated by demonstrated out-of-sample Brier skill.
 
-```
-sum( p_i ^ k ) = 1
-```
+**Systems / Rust**
 
-where `p_i` are the raw implied probabilities, solved by Newton–Raphson in [`app/engine/math_utils.py`](app/engine/math_utils.py). Unlike the naive multiplicative approach (`p_i / sum(p)`), the power method removes proportionally more margin from longshots, which better matches how books actually price the tails.
+- Cargo **workspace** (edition 2024, `resolver = "3"`) with five crates, workspace-wide dependency and profile management, `#![forbid(unsafe_code)]` throughout.
+- A **limit order book** with no `O(log n)` in the hot path: flat tick-indexed level array, a 16-word `TickBitset` where best-bid is `leading_zeros`, and orders in an intrusive doubly-linked list over a slab so cancel is `O(1)` with no allocation.
+- **Matching engine** with time-in-force, post-only, and self-trade prevention semantics.
+- **Automated market makers** — LMSR and constant-product (CPMM) — behind one `MarketMaker` trait.
+- **Purity as an architectural constraint**: no clocks, no I/O, no globals below the runtime layer; time is passed as data (`Ts`) so a backtest and a live session execute identical code.
+- **Integer money**: prices as signed micro-dollars, interned integer ids, so equality in the matching engine is sound and PnL does not drift.
+- Async ingestion with `tokio`, `reqwest`, `tokio-tungstenite`, `async-trait`; resilience as pure state machines — **token-bucket rate limiter, exponential backoff with jitter, circuit breaker**.
+- Venue adapter design, including the Kalshi YES/NO dual-bid-stack reflection (`100 − p`) that is the easy way to get a plausible-looking, uniformly wrong book.
 
-The service builds a **consensus** by averaging implied probabilities across every book quoting a market, devigs that consensus, and then compares each individual book's price against the consensus fair line. Where a book offers meaningfully longer odds than fair, that's an edge:
+**Python / data engineering**
 
-```
-EV = p_fair * (decimal_odds - 1) - (1 - p_fair)
-```
-
-Detected edges are deduplicated, persisted, and — once the game starts — closed out against the market's final price to record **Closing Line Value (CLV)**, the standard honesty check on whether a model actually beat the market.
+- Typed end to end: **Pydantic v2** payload schemas, **pydantic-settings** env-driven config, **SQLAlchemy 2.x** `Mapped[]` declarative ORM.
+- `asyncio` polling service with capped exponential backoff, designed to run unattended.
+- **Fuzzy entity resolution** with RapidFuzz `token_sort_ratio` behind an exact-hash fast path, plus time-window guards.
+- **Streamlit + Plotly** dashboard; **Playwright**-driven screenshot capture; **Graphviz** diagram rendering; an executed **Jupyter** notebook that imports the real application modules rather than reimplementing them.
+- **pytest** suite aimed at the parts most likely to be quietly wrong: solver convergence, CLV sign, per-outcome closeout scoping, malformed payloads, degenerate odds.
 
 ---
 
-## System architecture
+## Architecture
+
+Two systems live here. The Python service (`app/`) is the working reference implementation. The Rust workspace (`crates/`) is the rebuild, tracked in [`docs/migration.md`](docs/migration.md).
+
+### Component layout
+
+```text
+sports-betting-app/
+├── Cargo.toml                  # Rust workspace: edition 2024, members = crates/*
+├── crates/                     # ── Edge (Rust rebuild) ──────────────────────
+│   ├── edge-core/              # Pure quant. No I/O, no clock, no globals.
+│   │   └── src/ types.rs odds.rs devig.rs consensus.rs fees.rs ev.rs
+│   │            stats.rs market.rs rng.rs error.rs
+│   ├── edge-book/              # Order book, matching engine, AMMs
+│   │   └── src/ book.rs bitset.rs order.rs engine.rs amm.rs latency.rs
+│   ├── edge-risk/              # Position accounting, pre-trade limits, VaR, kill switch
+│   │   └── src/ position.rs limits.rs engine.rs var.rs
+│   ├── edge-alpha/             # Features, online predictor, strategies
+│   │   └── src/ features.rs predictor.rs strategy.rs
+│   │            strategies/{arbitrage,value,quoting,momentum,reversion}.rs
+│   └── edge-data/              # Venue adapters, resolution, resilience
+│       └── src/ source.rs http.rs venues/{kalshi,sim}.rs assembler.rs
+│                resolve.rs similarity.rs limiter.rs backoff.rs breaker.rs time.rs
+├── app/                        # ── LineEdge (Python service) ────────────────
+│   ├── core/                   # pydantic-settings config, rotating-file logging
+│   ├── engine/                 # resolver.py (entity matching), math_utils.py (devig/EV/Kelly)
+│   ├── ingestion/              # OddsProvider ABC + MockOddsClient, canonical seed data
+│   ├── models/schemas/         # Pydantic odds payload schemas
+│   ├── services/               # EdgeDetectionService: poll → detect → persist loop
+│   ├── storage/                # SQLAlchemy models, DatabaseManager, repository, EdgeAuditor
+│   ├── ui/dashboard.py         # Streamlit dashboard
+│   └── main.py                 # Entry point (service, or --once)
+├── docs/                       # architecture.md, migration.md, assets/
+├── notebooks/demo.ipynb        # Executed end-to-end walkthrough
+├── scripts/                    # market_sim, seed_demo_db, render_architecture, capture_docs
+└── tests/                      # pytest suite
+```
+
+The crate dependency graph is strictly layered — `edge-core` depends on nothing in the workspace, and everything above it is a function of its input event stream:
+
+```mermaid
+flowchart LR
+    core["edge-core<br/><i>types, odds, devig,<br/>consensus, fees, EV/Kelly, stats</i>"]
+    book["edge-book<br/><i>order book, matching,<br/>LMSR + CPMM</i>"]
+    risk["edge-risk<br/><i>positions, limits,<br/>VaR, kill switch</i>"]
+    alpha["edge-alpha<br/><i>features, predictor,<br/>5 strategies</i>"]
+    data["edge-data<br/><i>venue adapters, resolution,<br/>limiter/backoff/breaker</i>"]
+
+    core --> book
+    core --> risk
+    core --> alpha
+    core --> data
+    book --> alpha
+    book --> data
+    risk --> alpha
+```
+
+### Models
+
+**Pricing models (`edge-core`, and the Python subset)**
+
+| Model | Where | What it does |
+|---|---|---|
+| `DevigMethod::Multiplicative` | `crates/edge-core/src/devig.rs` | `π_i = p_i / Σp`. Cheap, biased toward longshots. Kept for comparison. |
+| `DevigMethod::Power` (default) | same | Solves `Σ p_i^k = 1`. Removes proportionally more margin from longshots. Also `strip_vig_power_method` in `app/engine/math_utils.py` (Newton–Raphson). |
+| `DevigMethod::Shin` | same | Shin (1993): margin as protection against informed traders; solves for insider fraction `z`. |
+| `DevigMethod::Additive` | same | `π_i = p_i − (Σp − 1)/n`, clamped at zero. |
+| Log-odds consensus pool | `consensus.rs` | Devigs each source, pools in log-odds with per-venue credibility weights and tail trimming, and returns dispersion (`estimate_sd`). |
+| Fee models | `fees.rs` | `None`, `Kalshi { ceil(rate × C × P × (1−P)), takers only }`, `Bps { maker, taker }`, `WinningsOnly { rate }`. Every EV function takes one. |
+| `EdgeAssessment` / `KellyPolicy` | `ev.rs` | EV net of fees by construction; Kelly at `fraction = 0.25`, `max_fraction = 0.05`, shrunk by `estimate_sd`. |
+| LMSR / CPMM | `crates/edge-book/src/amm.rs` | Logarithmic market scoring rule and constant-product makers behind one `MarketMaker` trait. |
+| Monte Carlo VaR / CVaR | `crates/edge-risk/src/var.rs` | Simulates resolution outcomes; one shared draw per event, common factor across events. `parametric_var` kept, labelled as the approximation it is. |
+
+**Learned model (`edge-alpha`)**
+
+- `Features` — 16 incremental microstructure features (`mid`, `microprice_edge`, `spread`, `imbalance_top`, `imbalance_depth`, `momentum_fast/slow`, `trend`, `volatility`, …), computed in constant time and space, with returns taken in log-odds and time-to-resolution as a first-class input.
+- `Predictor` — AdaGrad logistic regression over standardised features with the **market logit as a fixed offset**, so it learns only the residual and an untrained model echoes the market exactly. Online Platt calibration on the residual score; the blend weight against the market price is driven by realised out-of-sample **Brier** skill, so a model with no demonstrated edge has no influence and generates no trades.
+- Strategies (`strategies/`), each a pure function of a market snapshot into intents:
+
+  | Strategy | Trades on | Liquidity |
+  |---|---|---|
+  | `Arbitrage` | mutually exclusive legs costing under $1 | takes |
+  | `ValueTaker` | model or consensus disagreeing with the touch | takes |
+  | `QuoteMaker` | the spread, leaned against inventory | makes |
+  | `Momentum` | a move that order flow confirms | takes |
+  | `MeanReversion` | a move that order flow does *not* confirm | makes |
+
+  There is deliberately no separate "ML strategy": the predictor feeds `MarketView::independent_fair`, which the value taker and the maker already consume.
+
+**Data models (Python service)**
+
+- SQLAlchemy 2.x ORM (`app/storage/models.py`): `DetectedEdge` (`canonical_game_id`, `sport`, `market_type`, `bookmaker_name`, `outcome_name`, `odds_offered`, `fair_odds`, `calculated_ev`, `timestamp_detected`, `is_active`, `closing_line`, `clv_pct`, plus a composite index on game/market/book), `CanonicalTeam` (id, name, `aliases_json`), `CanonicalGame` (id, home/away team ids, sport, `start_time`).
+- Pydantic v2 payload schemas (`app/models/schemas/odds.py`): `OddsEvent → Bookmaker → Market → Outcome`.
+- Rust domain types (`crates/edge-core/src/types.rs`): `Price` in micro-dollars (`MICROS = 1_000_000`), validated `Prob`, `Ts` nanoseconds-since-epoch, and interned `MarketId` / `EventId` / `VenueId` / `OrderId` / `StrategyId`.
+
+### Python service data flow
 
 ```mermaid
 flowchart TD
@@ -102,116 +191,48 @@ flowchart TD
     class M sim;
 ```
 
-<details>
-<summary>Same flow as plain text</summary>
-
-```text
-[ OddsProvider ] --poll interval--> [ Entity Resolution ] --> [ Quantitative Engine ]
-                                            |                         |
-                                    (Exact/Fuzzy Matching)   (No-Vig Power Method)
-                                            v                         v
-[ SQLite Storage ] <---------------------------------------- [ Edge Detection ]
-      |                     |
-      v                     v
-[ Streamlit Dashboard ]  [ EdgeAuditor: CLV closeout on game start ]
-```
-
-</details>
-
 ![LineEdge architecture](docs/assets/architecture.png)
 
-Full write-up in [`docs/architecture.md`](docs/architecture.md). The rendered diagram is produced by [`scripts/render_architecture.py`](scripts/render_architecture.py).
+Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PNG comes from [`scripts/render_architecture.py`](scripts/render_architecture.py).
 
 ---
 
-## Key features
+## How it works
 
-- **Continuous detection loop** — `EdgeDetectionService` polls on an interval with exponential backoff on failure, exactly like a trading bot's poll/decide cycle.
-- **Entity normalization** — a two-tier resolver maps `"NY Rangers"`, `"Rangers"` and `"New York Rangers"` onto one canonical UUID: exact hash lookup first, RapidFuzz `token_sort_ratio` fallback second. Game resolution additionally requires a 6-hour start-time window, so the same fixture three days later won't false-positive.
-- **No-Vig Power Method devigging** — solves `sum(p_i^k) = 1` by Newton–Raphson, better behaved than multiplicative devigging on multi-way markets and at the tails.
-- **Cross-book consensus pricing** — fair odds come from the devigged average across all books, not from any single book's opinion.
-- **Deduplication and caching** — `EdgeCache` suppresses repeat writes for a standing price unless the TTL lapses or EV moves past a spike threshold.
-- **Closing Line Value audit** — `EdgeAuditor` closes out each market when the game starts, scoped per outcome, recording `clv_pct = implied(closing) − implied(offered)`. Positive means the flagged price beat the close.
-- **Typed throughout** — pydantic models for odds payloads, pydantic-settings for config, SQLAlchemy 2.x typed ORM for storage.
+### The Python service, end to end
 
----
+1. **Start up.** `app/main.py` loads `Settings` (env-prefixed `LINEEDGE_*`), configures rotating-file logging, opens the database, seeds canonical teams and games from `app/ingestion/seed_data/canonical_entities.json` if the tables are empty, and loads them into an `EntityResolver`.
+2. **Poll.** `EdgeDetectionService.run_forever()` calls `poll_once()` on an interval. The only provider implementation, `MockOddsClient`, reads a JSON odds fixture; `OddsProvider` is the swap point where a live feed would go. An exception during a cycle triggers capped exponential backoff instead of crashing the process.
+3. **Resolve.** Feed names are mapped onto canonical entities: exact hash lookup first, RapidFuzz `token_sort_ratio` fallback second, so `"NY Rangers"`, `"Rangers"` and `"New York Rangers"` collapse to one UUID. Game resolution additionally requires the start time to fall within a 6-hour window, so the same fixture three days later does not false-positive.
+4. **Price.** Each book's American odds become decimal odds, then implied probabilities. Implied probabilities are averaged across every book quoting the market to form a consensus, and that consensus is devigged with the power method — solving `Σ p_i^k = 1` by Newton–Raphson — to get fair probabilities.
+5. **Detect.** Each individual book's price is judged against the consensus fair line:
 
-## Screenshots
+   ```
+   EV = p_fair * (decimal_odds - 1) - (1 - p_fair)
+   ```
 
-> **These screenshots show SIMULATED market data produced by the mock provider** (`scripts/market_sim.py` → `MockOddsClient`). The bookmaker names are real brands, but none of these prices came from them — every number was generated by a synthetic market model. The dashboard itself is real, and these are unedited Playwright captures of it running.
+   Anything above `ev_threshold` (default 2%) is an edge.
+6. **Deduplicate.** `EdgeCache` keys on `(game, market, bookmaker)` and suppresses a repeat write for a standing price unless the TTL lapses or EV moves past the spike threshold — otherwise a single unchanged price would be re-recorded every cycle.
+7. **Persist.** Surviving edges are written to the `detected_edges` table in SQLite.
+8. **Audit.** Once a canonical game's start time has passed, `EdgeAuditor.close_out_market()` marks its active edges inactive, records the last-seen price as the closing line, and computes `clv_pct = implied(closing) − implied(offered)`, scoped per outcome. Positive CLV means the flagged price beat the close.
+9. **Display.** The Streamlit dashboard reads the same database — live edges ranked by EV, historical detection counts per cycle and by sport, and the CLV audit (predicted fair vs. actual close, plus the CLV distribution).
 
-### Live market edges
+### The Rust engine
 
-![Live edges tab](docs/assets/dashboard_live_edges.png)
+`edge-core` is pure — no I/O, no clock, no global state — so the same code path serves a live feed and a replayed journal. Above it, ingestion (`edge-data`) pulls REST snapshots and streaming updates through one `source` trait, guards each venue with a rate limiter, backoff and circuit breaker (all pure state machines over an explicit `Ts`, so a recorded outage replays identically), resolves venue-specific tickers onto a shared `EventId` — refusing to guess when the runner-up match is comparably strong — and assembles aggregate depth into the same `OrderBook` type the matching engine uses. `edge-alpha` extracts features from that book, runs the predictor, and emits `OrderIntent`s; strategies cannot submit orders or read a clock, so everything they emit must pass `edge-risk`, where size limits *resize* an order and permission limits (kill switch, stale mark, rate limit) *reject* it — and orders that reduce risk are always allowed, even mid-breach.
 
-The default view: every currently-active +EV opportunity, ranked by expected value, with headline counters for active edge count and max/average EV. Each row shows the price on offer, the devigged fair price it is being judged against, and the resulting EV, colour-scaled so the strongest edges stand out.
-
-### Historical analytics
-
-![Historical analytics tab](docs/assets/dashboard_historical.png)
-
-Edge-detection performance across the session — a time series of how many edges were flagged per polling cycle, plus a breakdown of total edges found by sport. This is the view for asking "is the detector firing steadily, or did one market spam it?"
-
-### CLV audit
-
-![CLV audit tab](docs/assets/dashboard_clv_audit.png)
-
-The self-audit. A scatter of predicted fair price against the market's actual closing price (tight clustering means the devigger tracked where the market settled), and the distribution of CLV across all closed-out markets. CLV is a *leading* indicator of edge — it says nothing about whether any individual bet would have won.
-
-### Dashboard preview
-
-![Dashboard preview](docs/assets/dashboard_preview.png)
-
-The landing view, used as the preview image at the top of this README (the live edges tab as the app first loads).
-
-All four captures are reproducible with [`scripts/capture_docs.py`](scripts/capture_docs.py), which drives the running Streamlit app with Playwright.
+**Current state** (see [`docs/migration.md`](docs/migration.md) for the tracker): `edge-core`, `edge-book`, `edge-risk` and `edge-alpha` are complete with unit tests throughout; `edge-data` has venue adapters (Kalshi and a seeded simulator), resolution and the resilience primitives, with persistence and the event journal still outstanding. The planned `edge-engine` (runtime, execution simulator, backtester), `edge-server` (HTTP + WebSocket API) and `edge-cli` crates do not exist yet — the workspace currently builds five crates.
 
 ---
 
-## Demo notebook
-
-**[`notebooks/demo.ipynb`](notebooks/demo.ipynb)** is a fully-executed end-to-end walkthrough. It imports the *real* application modules — nothing is reimplemented for the demo — and goes from a synthetic market through to charted results:
-
-1. Generate a synthetic multi-book market (`scripts/market_sim.py`)
-2. Ingest it through the real provider interface (`app/ingestion/mock_provider.py`)
-3. Resolve messy feed names onto canonical entities (`app/engine/resolver.py`)
-4. **Devig one market by hand** — raw implied probabilities, the overround, the solved exponent `k`, and how the power method differs from the naive method (`app/engine/math_utils.py`)
-5. Detect +EV edges and check the book set for arbitrage
-6. Run 14 simulated polling cycles through `EdgeDetectionService`, persisting to SQLite
-7. Read everything back through the storage layer and close markets out with `EdgeAuditor`
-
-Outputs are saved in the file, so it renders on GitHub without running anything. To re-execute it (the `jupyter` CLI is not required):
-
-```powershell
-$env:PYTHONPATH = "."
-python -c "import nbformat, nbclient; nb = nbformat.read('notebooks/demo.ipynb', as_version=4); nbclient.NotebookClient(nb, timeout=900, resources={'metadata': {'path': 'notebooks'}}).execute(); nbformat.write(nb, 'notebooks/demo.ipynb')"
-```
-
-### Charts from the notebook
-
-![Distribution of detected edges by expected value](docs/assets/notebook_edge_distribution.png)
-
-Where the flagged edges land relative to the detection threshold. The long right tail is characteristic of a market with dispersed book pricing.
-
-![Mean expected value by bookmaker](docs/assets/notebook_ev_by_book.png)
-
-Mean EV of the edges flagged at each book. Books simulated with a wider margin and a stronger price bias drift further from the consensus fair line, so more of their prices trip the threshold.
-
-![Closing line value outcomes](docs/assets/notebook_clv_outcomes.png)
-
-How the flagged prices fared against the close: the share that beat the closing line, and per-edge CLV in percentage points of implied probability.
-
-**Every figure above is derived from simulated data.** They characterise a synthetic market generator, not any real bookmaker, and they are not evidence that this or any strategy is profitable.
-
----
-
-## Setup
+## How to run
 
 ### Prerequisites
 
-- Python 3.11+
-- Playwright + Chromium — only to regenerate the dashboard screenshots
-- Graphviz — only to regenerate `docs/assets/architecture.png`
+- **Python 3.11+** — for the LineEdge service, dashboard, notebook and tests.
+- **Rust 1.85+** (edition 2024) — only for the `crates/` workspace.
+- **Playwright + Chromium** — only to regenerate dashboard screenshots.
+- **Graphviz** — only to regenerate `docs/assets/architecture.png`.
 
 ### Install
 
@@ -231,71 +252,73 @@ playwright install chromium   # for scripts/capture_docs.py
 
 ### Configuration
 
-Settings live in [`app/core/config.py`](app/core/config.py) and can be overridden by environment variables prefixed `LINEEDGE_`, or by a `.env` file:
+Settings live in [`app/core/config.py`](app/core/config.py) and are overridable by environment variables prefixed `LINEEDGE_`, or by a `.env` file.
 
 | Setting | Env var | Default | What it does |
 |---|---|---|---|
 | `db_url` | `LINEEDGE_DB_URL` | `sqlite:///./lineedge.db` | Where detected edges are persisted |
-| `poll_interval_seconds` | `LINEEDGE_POLL_INTERVAL_SECONDS` | `30` | Seconds between poll cycles |
+| `poll_interval_seconds` | `LINEEDGE_POLL_INTERVAL_SECONDS` | `30.0` | Seconds between poll cycles |
+| `max_backoff_seconds` | `LINEEDGE_MAX_BACKOFF_SECONDS` | `300.0` | Ceiling on failure backoff |
 | `ev_threshold` | `LINEEDGE_EV_THRESHOLD` | `0.02` | Minimum EV to record an edge (2%) |
 | `edge_cache_ttl_minutes` | `LINEEDGE_EDGE_CACHE_TTL_MINUTES` | `15` | How long a recorded edge suppresses duplicates |
 | `edge_cache_spike_threshold` | `LINEEDGE_EDGE_CACHE_SPIKE_THRESHOLD` | `0.02` | EV move that re-records a cached edge |
-| `max_backoff_seconds` | `LINEEDGE_MAX_BACKOFF_SECONDS` | `300` | Ceiling on failure backoff |
+| `log_level` | `LINEEDGE_LOG_LEVEL` | `INFO` | Logging level |
+| `log_dir` | `LINEEDGE_LOG_DIR` | `logs` | Rotating log file directory |
 | `mock_fixture_path` | `LINEEDGE_MOCK_FIXTURE_PATH` | `tests/fixtures/sample_odds_payload.json` | JSON odds fixture the mock provider reads |
 | `canonical_seed_path` | `LINEEDGE_CANONICAL_SEED_PATH` | `app/ingestion/seed_data/canonical_entities.json` | Canonical teams/games seeded on first run |
 
----
-
-## Running it
+### Commands
 
 Set `PYTHONPATH` to the repo root first (PowerShell shown; use `export PYTHONPATH=.` on a POSIX shell).
 
-**Continuous detection service** — the real poll/detect/persist loop:
-
 ```powershell
+# Continuous detection service — the real poll/detect/persist loop
 $env:PYTHONPATH = "."
 python app/main.py
-```
 
-**Single poll cycle** — useful as a smoke test or in CI:
-
-```powershell
-$env:PYTHONPATH = "."
+# Single poll cycle — smoke test / CI
 python app/main.py --once
-```
 
-**Populated demo database** — replays a multi-cycle simulated session through the real pipeline and leaves behind `lineedge_demo.db`, including CLV closeouts:
-
-```powershell
-$env:PYTHONPATH = "."
+# Populated demo database — replays 12 simulated cycles through the real
+# pipeline and leaves behind lineedge_demo.db, including CLV closeouts
 python scripts/seed_demo_db.py
-```
 
-**Dashboard** — reads whichever database `db_url` points at, so point it at the demo DB to reproduce the screenshots above:
-
-```powershell
+# Dashboard — reads whichever database db_url points at
 $env:LINEEDGE_DB_URL = "sqlite:///./lineedge_demo.db"
 streamlit run app/ui/dashboard.py
-```
 
-**Regenerate documentation assets**:
-
-```powershell
-$env:PYTHONPATH = "."
-python scripts/render_architecture.py   # docs/assets/architecture.png
-python scripts/capture_docs.py          # the four dashboard screenshots (needs Playwright)
-```
-
----
-
-## Testing
-
-```powershell
+# Tests
 $env:PYTHONPATH = "."
 python -m pytest tests/ -v
+
+# Documentation assets
+python scripts/render_architecture.py   # docs/assets/architecture.png (needs Graphviz)
+python scripts/capture_docs.py          # dashboard screenshots (needs Playwright)
 ```
 
-The suite covers the parts most likely to be quietly wrong:
+The Rust workspace:
+
+```powershell
+cargo test              # all five crates
+cargo build --release   # the quant hot path is unusably slow in a debug build
+```
+
+On Windows with the `windows-gnu` toolchain, proc-macro DLLs fail to link unless the msvcrt-based compiler is first on `PATH` (`windows-msvc` needs none of this):
+
+```powershell
+C:\msys64\usr\bin\pacman -S --needed mingw-w64-x86_64-gcc
+$env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
+cargo test
+```
+
+Re-executing the demo notebook (the `jupyter` CLI is not required):
+
+```powershell
+$env:PYTHONPATH = "."
+python -c "import nbformat, nbclient; nb = nbformat.read('notebooks/demo.ipynb', as_version=4); nbclient.NotebookClient(nb, timeout=900, resources={'metadata': {'path': 'notebooks'}}).execute(); nbformat.write(nb, 'notebooks/demo.ipynb')"
+```
+
+### Python test suite
 
 | File | Covers |
 |---|---|
@@ -307,31 +330,47 @@ The suite covers the parts most likely to be quietly wrong:
 
 ---
 
-## Project layout
+## Screenshots
 
-```text
-sports-betting-app/
-├── app/
-│   ├── core/          # Settings (pydantic-settings) and logging setup
-│   ├── engine/        # Pure logic: resolver.py (entity matching), math_utils.py (devig/EV/Kelly)
-│   ├── ingestion/     # OddsProvider interface + MockOddsClient, canonical seed data
-│   ├── models/        # Pydantic schemas for odds payloads
-│   ├── services/      # EdgeDetectionService: the continuous poll/detect/persist loop
-│   ├── storage/       # SQLAlchemy models, DatabaseManager, repository, EdgeAuditor (CLV)
-│   ├── ui/            # Streamlit dashboard
-│   └── main.py        # Entry point (service, or --once)
-├── docs/
-│   ├── architecture.md
-│   └── assets/        # Rendered diagram, dashboard captures, notebook charts
-├── notebooks/
-│   └── demo.ipynb     # Executed end-to-end walkthrough
-├── scripts/
-│   ├── market_sim.py           # Synthetic multi-book market generator
-│   ├── seed_demo_db.py         # Replays a simulated session into a demo DB
-│   ├── render_architecture.py  # Renders docs/assets/architecture.png
-│   └── capture_docs.py         # Playwright dashboard screenshots
-└── tests/
-```
+> **These screenshots show SIMULATED market data** produced by `scripts/market_sim.py` → `MockOddsClient`. The bookmaker names are real brands, but none of these prices came from them. The dashboard itself is real — these are unedited Playwright captures of it running.
+
+**Live market edges** — every currently-active +EV opportunity, ranked by EV, with the price on offer, the devigged fair price it is judged against, and headline counters for active edge count and max/average EV.
+
+![Live edges tab](docs/assets/dashboard_live_edges.png)
+
+**Historical analytics** — edges flagged per polling cycle over the session, plus a breakdown by sport: is the detector firing steadily, or did one market spam it?
+
+![Historical analytics tab](docs/assets/dashboard_historical.png)
+
+**CLV audit** — predicted fair price against the market's actual closing price (tight clustering means the devigger tracked where the market settled), and the distribution of CLV across closed-out markets.
+
+![CLV audit tab](docs/assets/dashboard_clv_audit.png)
+
+All captures are reproducible with [`scripts/capture_docs.py`](scripts/capture_docs.py).
+
+---
+
+## Demo notebook
+
+**[`notebooks/demo.ipynb`](notebooks/demo.ipynb)** is a fully-executed end-to-end walkthrough that imports the *real* application modules — nothing is reimplemented for the demo:
+
+1. Generate a synthetic multi-book market (`scripts/market_sim.py`)
+2. Ingest it through the real provider interface (`app/ingestion/mock_provider.py`)
+3. Resolve messy feed names onto canonical entities (`app/engine/resolver.py`)
+4. **Devig one market by hand** — raw implied probabilities, the overround, the solved exponent `k`, and how the power method differs from the naive one (`app/engine/math_utils.py`)
+5. Detect +EV edges and check the book set for arbitrage
+6. Run 14 simulated polling cycles through `EdgeDetectionService`, persisting to SQLite
+7. Read everything back through the storage layer and close markets out with `EdgeAuditor`
+
+Outputs are saved in the file, so it renders on GitHub without running anything.
+
+![Distribution of detected edges by expected value](docs/assets/notebook_edge_distribution.png)
+
+![Mean expected value by bookmaker](docs/assets/notebook_ev_by_book.png)
+
+![Closing line value outcomes](docs/assets/notebook_clv_outcomes.png)
+
+**Every figure above is derived from simulated data.** They characterise a synthetic market generator, not any real bookmaker, and are not evidence that this or any strategy is profitable.
 
 ---
 
@@ -339,14 +378,15 @@ sports-betting-app/
 
 Read this before drawing any conclusion from anything above.
 
-- **All odds are simulated.** Every price in this repository, in the screenshots, and in the demo notebook was generated by `scripts/market_sim.py`, a synthetic market model. None of it came from a bookmaker.
-- **There is no real bookmaker integration.** The only provider implementation is `MockOddsClient`, which reads JSON fixtures off disk. `OddsProvider` exists as the swap point where a live feed would go, but no such feed is connected — and connecting one raises API terms, rate-limit, latency and licensing questions this project does not address.
-- **Simulated markets are easier than real ones.** The generator produces price dispersion by construction. A real market is tighter, moves faster, and closes the gaps you find before you can act on them. The edge counts and EV figures here would not survive contact with a live book.
-- **Detection only — nothing is executed.** No bet placement, no bankroll management, no account handling, no order routing. Kelly sizing is computed for illustration and acted on by nobody.
+- **All odds are simulated.** Every price in this repository, in the screenshots, and in the demo notebook was generated by `scripts/market_sim.py` or the Rust `Simulator` venue. None of it came from a bookmaker.
+- **There is no live bookmaker integration.** The only Python provider is `MockOddsClient`, reading JSON fixtures off disk. `OddsProvider` is the swap point where a live feed would go, but no such feed is connected — and connecting one raises API terms, rate-limit, latency and licensing questions this project does not address. The Rust Kalshi adapter reads public market data only; order placement and its request signing are not implemented.
+- **Simulated markets are easier than real ones.** The generator produces price dispersion by construction. A real market is tighter, moves faster, and closes the gaps before you can act on them.
+- **Detection only — nothing is executed.** No bet placement, no account handling, no live order routing. Kelly sizing is computed and acted on by nobody.
 - **No settled-result data.** CLV is measured against a simulated closing price. The system never learns whether a flagged bet would have won, so nothing here is a backtest of profitability.
-- **Real-world frictions are ignored.** Stake limits, account limiting and closure, withdrawal friction, line movement between detection and placement, and taxes are all outside the model.
-- **Narrow market scope.** Only two-way `h2h` (moneyline) markets are handled. Spreads, totals and multi-way markets are not.
-- **This is not financial advice.** LineEdge is an engineering demonstration of a data pipeline: ingestion, entity resolution, numerical methods, persistence, auditing and visualisation. It is not a betting system, not a recommendation to gamble, and not advice of any kind. Gambling carries real risk of financial loss. If gambling is causing you harm, support is available from [BeGambleAware](https://www.begambleaware.org/) or the [National Council on Problem Gambling](https://www.ncpgambling.org/).
+- **Real-world frictions are ignored** in the Python service: stake limits, account limiting and closure, withdrawal friction, line movement between detection and placement, and taxes.
+- **Narrow market scope** in the Python service: only two-way `h2h` (moneyline) markets. Spreads, totals and multi-way markets are not handled.
+- **The Rust rebuild is incomplete.** There is no runtime, backtester, server or CLI yet, and no persistence layer — the crates that exist are libraries with tests, not a deployable system.
+- **This is not financial advice.** This repository is an engineering demonstration of a data and pricing pipeline: ingestion, entity resolution, numerical methods, persistence, auditing and visualisation. It is not a betting system, not a recommendation to gamble, and not advice of any kind. Gambling carries real risk of financial loss. If gambling is causing you harm, support is available from [BeGambleAware](https://www.begambleaware.org/) or the [National Council on Problem Gambling](https://www.ncpgambling.org/).
 
 ---
 
