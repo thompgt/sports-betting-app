@@ -168,9 +168,21 @@ impl Assembler {
         }
     }
 
-    /// Every market whose book can currently be believed.
+    /// Every market whose book can currently be believed, in `MarketId` order.
+    ///
+    /// Sorted, not merely collected. The backing map is a `HashMap`, whose
+    /// iteration order Rust randomises per process — so an unsorted result
+    /// hands the caller a different market order on every run. That is
+    /// invisible right up until something downstream is order-sensitive, and
+    /// the whole runtime is: a rate limiter, a cash budget and a concentration
+    /// limit are all first-come-first-served, so whichever market happens to be
+    /// visited first gets the capital. Two runs of the same seed then diverge,
+    /// and the determinism the backtester depends on is quietly gone.
     pub fn fresh_markets(&self, now: Ts) -> Vec<MarketId> {
-        self.books.keys().copied().filter(|m| !self.is_stale(*m, now)).collect()
+        let mut out: Vec<MarketId> =
+            self.books.keys().copied().filter(|m| !self.is_stale(*m, now)).collect();
+        out.sort_unstable();
+        out
     }
 
     fn next_order_id(&mut self) -> OrderId {
@@ -677,6 +689,31 @@ mod tests {
         assert!(!a.is_stale(m, Ts::from_secs(120)));
         assert!(a.is_stale(m, Ts::from_secs(200)), "30s of nothing is not a healthy feed");
         assert!(a.fresh_markets(Ts::from_secs(200)).is_empty());
+    }
+
+    #[test]
+    fn fresh_markets_come_back_in_a_stable_order() {
+        // The books live in a HashMap, whose iteration order Rust randomises
+        // per process. Leaking that to the caller makes every order-sensitive
+        // thing downstream — the rate limiter, the cash budget, the
+        // concentration limits — hand the capital to whichever market happened
+        // to be visited first, so two runs of one seed diverge.
+        let mut a = Assembler::new(V, AssemblerConfig::default());
+        for t in ["D", "A", "C", "B", "E"] {
+            a.register(&Listing::new(t, "E1"));
+            apply(
+                &mut a,
+                VenueUpdate::Book {
+                    ticker: t.into(),
+                    book: snapshot(&[(45, 100)], &[(47, 80)], 10),
+                },
+            );
+        }
+        let fresh = a.fresh_markets(Ts::from_secs(110));
+        assert_eq!(fresh.len(), 5);
+        let mut sorted = fresh.clone();
+        sorted.sort_unstable();
+        assert_eq!(fresh, sorted, "the order must not depend on the hash seed");
     }
 
     #[test]
