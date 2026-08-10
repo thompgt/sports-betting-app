@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "edge_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "edge"
 path = "src/main.rs"
@@ -19,3 +23,6 @@ edge-risk = { workspace = true }
 edge-alpha = { workspace = true }
 edge-data = { workspace = true }
 tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }
