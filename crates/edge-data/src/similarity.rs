@@ -191,9 +191,7 @@ pub fn token_set_ratio(a: &str, b: &str) -> f64 {
     let full_a = format!("{shared} {only_a}").trim_end().to_string();
     let full_b = format!("{shared} {only_b}").trim_end().to_string();
 
-    ratio(&shared, &full_a)
-        .max(ratio(&shared, &full_b))
-        .max(ratio(&full_a, &full_b))
+    ratio(&shared, &full_a).max(ratio(&shared, &full_b)).max(ratio(&full_a, &full_b))
 }
 
 /// Collapse runs of words in `long` whose initials spell a token of `short`.
@@ -284,7 +282,9 @@ mod tests {
     #[test]
     fn word_order_does_not_matter() {
         assert_eq!(token_sort_ratio("Inter Milan", "Milan Inter"), 1.0);
-        assert!(token_sort_ratio("Inter Milan", "Milan Inter") > ratio("inter milan", "milan inter"));
+        assert!(
+            token_sort_ratio("Inter Milan", "Milan Inter") > ratio("inter milan", "milan inter")
+        );
     }
 
     #[test]

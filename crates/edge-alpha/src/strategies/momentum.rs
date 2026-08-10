@@ -73,7 +73,9 @@ impl Default for MomentumConfig {
 impl MomentumConfig {
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.min_flow <= 0.0 {
-            return Err("flow confirmation cannot be disabled: an unconfirmed drift is not a signal");
+            return Err(
+                "flow confirmation cannot be disabled: an unconfirmed drift is not a signal",
+            );
         }
         if self.exit_trend >= self.min_trend {
             return Err("exit threshold must be below the entry threshold");
@@ -94,11 +96,7 @@ pub struct Momentum {
 
 impl Momentum {
     pub fn new(id: StrategyId, cfg: MomentumConfig) -> Self {
-        Momentum {
-            id,
-            cfg,
-            stats: StatsRecorder::default(),
-        }
+        Momentum { id, cfg, stats: StatsRecorder::default() }
     }
 
     pub fn config(&self) -> &MomentumConfig {
@@ -243,14 +241,7 @@ mod tests {
 
     #[test]
     fn confirmation_cannot_be_configured_away() {
-        assert!(
-            MomentumConfig {
-                min_flow: 0.0,
-                ..Default::default()
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(MomentumConfig { min_flow: 0.0, ..Default::default() }.validate().is_err());
     }
 
     #[test]

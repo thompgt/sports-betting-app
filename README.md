@@ -9,6 +9,11 @@ A running Python service that devigs multi-bookmaker odds and surfaces +EV and a
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=for-the-badge&logo=plotly&logoColor=white)
 
+[![CI](https://github.com/thompgt/sports-betting-app/actions/workflows/ci.yml/badge.svg)](https://github.com/thompgt/sports-betting-app/actions/workflows/ci.yml)
+
+Every push runs `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, a
+release build, and the pytest suite.
+
 > **All market data in this repository is SIMULATED.** There is no live bookmaker
 > integration and no bet is ever placed. See [Limitations](#limitations).
 

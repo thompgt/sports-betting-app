@@ -257,22 +257,10 @@ mod tests {
         l.max_event_cost = l.max_portfolio_cost * 2.0;
         assert!(l.validate().is_err());
 
-        assert!(
-            RiskLimits {
-                max_drawdown: 1.5,
-                ..Default::default()
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(RiskLimits { max_drawdown: 1.5, ..Default::default() }.validate().is_err());
 
         assert!(
-            RiskLimits {
-                max_orders_per_second: 0.0,
-                ..Default::default()
-            }
-            .validate()
-            .is_err()
+            RiskLimits { max_orders_per_second: 0.0, ..Default::default() }.validate().is_err()
         );
     }
 

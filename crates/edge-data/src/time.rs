@@ -159,7 +159,8 @@ pub fn parse_rfc3339(input: &str) -> Result<Ts, DataError> {
     let second = second.min(59);
 
     let days = days_from_civil(year as i64, month, day);
-    let secs = days * 86_400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64 - offset_secs;
+    let secs =
+        days * 86_400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64 - offset_secs;
 
     secs.checked_mul(NANOS_PER_SEC)
         .and_then(|n| n.checked_add(nanos))

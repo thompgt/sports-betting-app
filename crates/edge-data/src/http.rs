@@ -119,8 +119,10 @@ impl Transport for HttpTransport {
     async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Vec<u8>> {
         let mut url = format!("{}/{}", self.base, path.trim_start_matches('/'));
         if !query.is_empty() {
-            let q: Vec<String> =
-                query.iter().map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v))).collect();
+            let q: Vec<String> = query
+                .iter()
+                .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
+                .collect();
             url.push('?');
             url.push_str(&q.join("&"));
         }

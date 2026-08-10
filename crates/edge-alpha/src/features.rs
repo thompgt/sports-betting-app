@@ -182,16 +182,10 @@ impl FeatureExtractor {
         let imbalance_top = book.imbalance(1).unwrap_or(0.0);
         let imbalance_depth = book.imbalance(5).unwrap_or(0.0);
 
-        let momentum_fast = if self.mid_fast.is_ready() {
-            logit - self.mid_fast.mean()
-        } else {
-            0.0
-        };
-        let momentum_slow = if self.mid_slow.is_ready() {
-            logit - self.mid_slow.mean()
-        } else {
-            0.0
-        };
+        let momentum_fast =
+            if self.mid_fast.is_ready() { logit - self.mid_fast.mean() } else { 0.0 };
+        let momentum_slow =
+            if self.mid_slow.is_ready() { logit - self.mid_slow.mean() } else { 0.0 };
         let trend = if self.mid_slow.is_ready() {
             self.mid_fast.mean() - self.mid_slow.mean()
         } else {
@@ -243,10 +237,7 @@ impl FeatureExtractor {
             1.0,
         ];
 
-        let f = Features {
-            values,
-            mid: mid.get(),
-        };
+        let f = Features { values, mid: mid.get() };
         f.is_valid().then_some(f)
     }
 
@@ -474,10 +465,7 @@ mod tests {
 
         // A market with no scheduled close sits at the "not imminent" prior.
         f.spec.closes_at = None;
-        assert_eq!(
-            f.ex.extract(&f.book, &f.spec, Ts::ZERO).unwrap().get("time_decay"),
-            Some(1.0)
-        );
+        assert_eq!(f.ex.extract(&f.book, &f.spec, Ts::ZERO).unwrap().get("time_decay"), Some(1.0));
     }
 
     #[test]

@@ -27,11 +27,7 @@ pub struct Welford {
 
 impl Welford {
     pub const fn new() -> Self {
-        Welford {
-            count: 0,
-            mean: 0.0,
-            m2: 0.0,
-        }
+        Welford { count: 0, mean: 0.0, m2: 0.0 }
     }
 
     pub fn push(&mut self, x: f64) {
@@ -56,11 +52,7 @@ impl Welford {
 
     /// Sample variance (Bessel-corrected). Zero until two observations exist.
     pub fn variance(&self) -> f64 {
-        if self.count < 2 {
-            0.0
-        } else {
-            self.m2 / (self.count - 1) as f64
-        }
+        if self.count < 2 { 0.0 } else { self.m2 / (self.count - 1) as f64 }
     }
 
     pub fn std_dev(&self) -> f64 {
@@ -70,11 +62,7 @@ impl Welford {
     /// Standard error of the mean — the number that says whether an observed
     /// edge is distinguishable from zero.
     pub fn std_err(&self) -> f64 {
-        if self.count < 2 {
-            f64::INFINITY
-        } else {
-            self.std_dev() / (self.count as f64).sqrt()
-        }
+        if self.count < 2 { f64::INFINITY } else { self.std_dev() / (self.count as f64).sqrt() }
     }
 
     /// Merge another accumulator (Chan et al.), for combining per-shard stats.
@@ -113,22 +101,14 @@ pub struct Ewma {
 impl Ewma {
     /// `alpha` is the weight on each new observation, in `(0, 1]`.
     pub fn new(alpha: f64) -> Self {
-        Ewma {
-            alpha: alpha.clamp(1e-9, 1.0),
-            mean: 0.0,
-            var: 0.0,
-            initialised: false,
-        }
+        Ewma { alpha: alpha.clamp(1e-9, 1.0), mean: 0.0, var: 0.0, initialised: false }
     }
 
     /// Construct from a half-life in observations, which is usually the more
     /// natural way to think about it than a raw decay constant.
     pub fn from_half_life(half_life: f64) -> Self {
-        let alpha = if half_life <= 0.0 {
-            1.0
-        } else {
-            1.0 - (-std::f64::consts::LN_2 / half_life).exp()
-        };
+        let alpha =
+            if half_life <= 0.0 { 1.0 } else { 1.0 - (-std::f64::consts::LN_2 / half_life).exp() };
         Ewma::new(alpha)
     }
 
@@ -178,11 +158,7 @@ pub struct RollingWindow {
 
 impl RollingWindow {
     pub fn new(capacity: usize) -> Self {
-        RollingWindow {
-            buf: vec![0.0; capacity.max(1)],
-            head: 0,
-            len: 0,
-        }
+        RollingWindow { buf: vec![0.0; capacity.max(1)], head: 0, len: 0 }
     }
 
     pub fn push(&mut self, x: f64) {

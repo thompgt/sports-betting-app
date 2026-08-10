@@ -173,13 +173,7 @@ fn devig_additive(p: &[f64], sum: f64, method: DevigMethod) -> Devigged {
     // the failure mode this method is known for. Clamp and renormalise so the
     // result is at least a valid distribution.
     let shifted: Vec<f64> = p.iter().map(|x| (x - per).max(0.0)).collect();
-    Devigged {
-        fair: normalise(&shifted),
-        overround: sum,
-        parameter: per,
-        method,
-        iterations: 0,
-    }
+    Devigged { fair: normalise(&shifted), overround: sum, parameter: per, method, iterations: 0 }
 }
 
 /// Solve `Σ p_i^k = 1` for `k`.
@@ -222,7 +216,11 @@ fn devig_power(p: &[f64], sum: f64, method: DevigMethod) -> Result<Devigged> {
             break;
         }
         // Maintain the bracket using the sign of f at the current iterate.
-        if fk > 0.0 { lo = k } else { hi = k }
+        if fk > 0.0 {
+            lo = k
+        } else {
+            hi = k
+        }
 
         // f'(k) = Σ p_i^k · ln(p_i), strictly negative here.
         let dfk: f64 = p
@@ -236,11 +234,7 @@ fn devig_power(p: &[f64], sum: f64, method: DevigMethod) -> Result<Devigged> {
         let next = if dfk.abs() > 1e-300 { k - fk / dfk } else { f64::NAN };
         // Accept the Newton step only when it stays strictly inside the bracket;
         // otherwise bisect. This is what makes the solver total.
-        k = if next.is_finite() && next > lo && next < hi {
-            next
-        } else {
-            0.5 * (lo + hi)
-        };
+        k = if next.is_finite() && next > lo && next < hi { next } else { 0.5 * (lo + hi) };
 
         if (hi - lo).abs() < TOL {
             break;
@@ -248,13 +242,7 @@ fn devig_power(p: &[f64], sum: f64, method: DevigMethod) -> Result<Devigged> {
     }
 
     let fair: Vec<f64> = p.iter().map(|&x| x.max(Prob::EPS).powf(k)).collect();
-    Ok(Devigged {
-        fair: normalise(&fair),
-        overround: sum,
-        parameter: k,
-        method,
-        iterations,
-    })
+    Ok(Devigged { fair: normalise(&fair), overround: sum, parameter: k, method, iterations })
 }
 
 /// Shin's model: solve `Σ π_i(z) = 1` where
@@ -314,13 +302,7 @@ fn devig_shin(p: &[f64], sum: f64, method: DevigMethod) -> Result<Devigged> {
         })
         .collect();
 
-    Ok(Devigged {
-        fair: normalise(&fair),
-        overround: sum,
-        parameter: z,
-        method,
-        iterations,
-    })
+    Ok(Devigged { fair: normalise(&fair), overround: sum, parameter: z, method, iterations })
 }
 
 #[cfg(test)]
@@ -414,9 +396,7 @@ mod tests {
     #[test]
     fn power_handles_a_large_field() {
         // A 20-runner race with a fat overround — the multi-way stress case.
-        let raw: Vec<Prob> = (0..20)
-            .map(|i| Prob::new(0.09 - 0.003 * i as f64).unwrap())
-            .collect();
+        let raw: Vec<Prob> = (0..20).map(|i| Prob::new(0.09 - 0.003 * i as f64).unwrap()).collect();
         let d = devig(&raw, DevigMethod::Power).unwrap();
         sums_to_one(&d);
         assert!(d.overround > 1.0);
@@ -467,10 +447,7 @@ mod tests {
     fn certainty_and_emptiness_are_errors_not_panics() {
         assert!(devig(&[], DevigMethod::Power).is_err());
         let raw = vec![Prob::ONE, Prob::new(0.1).unwrap()];
-        assert!(matches!(
-            devig(&raw, DevigMethod::Power),
-            Err(EdgeError::DegenerateMarket(_))
-        ));
+        assert!(matches!(devig(&raw, DevigMethod::Power), Err(EdgeError::DegenerateMarket(_))));
     }
 
     #[test]

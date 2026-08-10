@@ -102,12 +102,7 @@ impl RateLimiter {
         for b in &mut self.buckets {
             b.refill(now);
         }
-        let wait = self
-            .buckets
-            .iter()
-            .map(|b| b.wait_for(cost))
-            .max()
-            .unwrap_or(Duration::ZERO);
+        let wait = self.buckets.iter().map(|b| b.wait_for(cost)).max().unwrap_or(Duration::ZERO);
         if wait > Duration::ZERO {
             return Err(wait);
         }

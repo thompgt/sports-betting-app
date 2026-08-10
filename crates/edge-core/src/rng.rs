@@ -35,18 +35,12 @@ impl Rng {
             x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
             x ^ (x >> 31)
         };
-        Rng {
-            s: [next(), next(), next(), next()],
-            spare_normal: None,
-        }
+        Rng { s: [next(), next(), next(), next()], spare_normal: None }
     }
 
     #[inline]
     pub fn next_u64(&mut self) -> u64 {
-        let result = self.s[0]
-            .wrapping_add(self.s[3])
-            .rotate_left(23)
-            .wrapping_add(self.s[0]);
+        let result = self.s[0].wrapping_add(self.s[3]).rotate_left(23).wrapping_add(self.s[0]);
         let t = self.s[1] << 17;
         self.s[2] ^= self.s[0];
         self.s[3] ^= self.s[1];
@@ -189,10 +183,7 @@ mod tests {
             counts[r.below(7) as usize] += 1;
         }
         for (i, c) in counts.iter().enumerate() {
-            assert!(
-                (*c as i64 - 10_000).abs() < 600,
-                "bucket {i} got {c}, expected ~10000"
-            );
+            assert!((*c as i64 - 10_000).abs() < 600, "bucket {i} got {c}, expected ~10000");
         }
         assert_eq!(r.below(0), 0);
         assert_eq!(r.below(1), 0);

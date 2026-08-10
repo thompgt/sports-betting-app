@@ -240,7 +240,8 @@ impl Resolver {
         // Best and second-best over distinct teams. Tracking the runner-up is
         // the entire safety mechanism, so it is computed even when the leader
         // is a runaway.
-        let (mut best, mut second) = ((TeamId(0), f64::NEG_INFINITY), (TeamId(0), f64::NEG_INFINITY));
+        let (mut best, mut second) =
+            ((TeamId(0), f64::NEG_INFINITY), (TeamId(0), f64::NEG_INFINITY));
         for (i, forms) in self.surfaces.iter().enumerate() {
             let id = TeamId(i as u32);
             if !self.in_league(id, league) {
@@ -410,12 +411,10 @@ impl Resolver {
     }
 
     pub fn from_json(json: &str, cfg: ResolverConfig) -> Result<Self, DataError> {
-        let catalog: Catalog = serde_json::from_str(json).map_err(|e| {
-            DataError::Decode {
-                venue: "catalog".into(),
-                what: "entities".into(),
-                detail: e.to_string(),
-            }
+        let catalog: Catalog = serde_json::from_str(json).map_err(|e| DataError::Decode {
+            venue: "catalog".into(),
+            what: "entities".into(),
+            detail: e.to_string(),
         })?;
         Resolver::from_catalog(&catalog, cfg)
     }
@@ -545,7 +544,10 @@ mod tests {
     #[test]
     fn an_abbreviated_city_resolves() {
         let r = resolver();
-        assert_eq!(r.resolve_team("L.A. Lakers", None).id().map(|i| &r.team(i).unwrap().key), Some(&"lal".to_string()));
+        assert_eq!(
+            r.resolve_team("L.A. Lakers", None).id().map(|i| &r.team(i).unwrap().key),
+            Some(&"lal".to_string())
+        );
     }
 
     #[test]
@@ -619,7 +621,8 @@ mod tests {
     #[test]
     fn a_fixture_resolves_from_both_names_and_a_kickoff() {
         let r = resolver();
-        let m = r.resolve_game("NY Knicks", "Celtics", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
+        let m =
+            r.resolve_game("NY Knicks", "Celtics", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
         assert_eq!(r.game(m.game).unwrap().key, "g1");
         assert!(!m.swapped);
     }
@@ -627,7 +630,8 @@ mod tests {
     #[test]
     fn a_venue_listing_the_teams_backwards_still_lands_on_the_same_fixture() {
         let r = resolver();
-        let m = r.resolve_game("Celtics", "NY Knicks", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
+        let m =
+            r.resolve_game("Celtics", "NY Knicks", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
         assert_eq!(r.game(m.game).unwrap().key, "g1");
         assert!(m.swapped, "the caller's home side is the catalogue's away side");
     }
@@ -635,11 +639,13 @@ mod tests {
     #[test]
     fn the_kickoff_separates_two_meetings_of_the_same_pair() {
         let r = resolver();
-        let early = r.resolve_game("Knicks", "Celtics", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
+        let early =
+            r.resolve_game("Knicks", "Celtics", Some(at("2026-05-27T22:00:00Z")), None).unwrap();
         assert_eq!(r.game(early.game).unwrap().key, "g1");
         // The Celtics also visit the Lakers four hours later; a pair of names
         // alone would not tell those apart.
-        let late = r.resolve_game("Lakers", "Celtics", Some(at("2026-05-28T02:00:00Z")), None).unwrap();
+        let late =
+            r.resolve_game("Lakers", "Celtics", Some(at("2026-05-28T02:00:00Z")), None).unwrap();
         assert_eq!(r.game(late.game).unwrap().key, "g2");
     }
 
@@ -655,7 +661,8 @@ mod tests {
     #[test]
     fn a_local_time_quoted_a_few_hours_out_still_matches() {
         let r = resolver();
-        let m = r.resolve_game("Knicks", "Celtics", Some(at("2026-05-27T18:00:00Z")), None).unwrap();
+        let m =
+            r.resolve_game("Knicks", "Celtics", Some(at("2026-05-27T18:00:00Z")), None).unwrap();
         assert_eq!(r.game(m.game).unwrap().key, "g1");
     }
 
@@ -727,8 +734,14 @@ mod tests {
             parse_matchup("Lakers vs. Celtics"),
             Some(("Lakers", "Celtics", Orientation::Unknown))
         );
-        assert_eq!(parse_matchup("Lakers v Celtics"), Some(("Lakers", "Celtics", Orientation::Unknown)));
-        assert_eq!(parse_matchup("Lakers - Celtics"), Some(("Lakers", "Celtics", Orientation::Unknown)));
+        assert_eq!(
+            parse_matchup("Lakers v Celtics"),
+            Some(("Lakers", "Celtics", Orientation::Unknown))
+        );
+        assert_eq!(
+            parse_matchup("Lakers - Celtics"),
+            Some(("Lakers", "Celtics", Orientation::Unknown))
+        );
     }
 
     #[test]

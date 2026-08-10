@@ -35,13 +35,7 @@ impl Default for LatencyHistogram {
 
 impl LatencyHistogram {
     pub fn new() -> Self {
-        LatencyHistogram {
-            counts: vec![0; BUCKETS],
-            total: 0,
-            sum: 0,
-            min: u64::MAX,
-            max: 0,
-        }
+        LatencyHistogram { counts: vec![0; BUCKETS], total: 0, sum: 0, min: u64::MAX, max: 0 }
     }
 
     #[inline]
@@ -208,11 +202,7 @@ mod tests {
             h.record(50_000);
         }
         assert!(h.mean() < 1_000.0, "the mean looks fine: {}", h.mean());
-        assert!(
-            h.percentile(0.995) > 40_000,
-            "the tail must still show: {}",
-            h.percentile(0.995)
-        );
+        assert!(h.percentile(0.995) > 40_000, "the tail must still show: {}", h.percentile(0.995));
         assert_eq!(h.max(), 50_000);
     }
 

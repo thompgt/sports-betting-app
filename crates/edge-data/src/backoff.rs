@@ -255,9 +255,8 @@ mod tests {
             jitter: Jitter::None,
         };
         let mut rng = Rng::new(4);
-        let d: Vec<f64> = (0..8)
-            .map(|a| backoff.delay(a, Duration::ZERO, &mut rng).as_secs_f64())
-            .collect();
+        let d: Vec<f64> =
+            (0..8).map(|a| backoff.delay(a, Duration::ZERO, &mut rng).as_secs_f64()).collect();
         assert!((d[0] - 0.1).abs() < 1e-9);
         assert!((d[1] - 0.2).abs() < 1e-9);
         assert!((d[2] - 0.4).abs() < 1e-9);
@@ -354,9 +353,7 @@ mod tests {
         let run = || {
             let mut r = unbounded().start();
             let mut rng = Rng::new(99);
-            (0..5)
-                .map(|_| r.on_error(&transient(), Duration::ZERO, &mut rng))
-                .collect::<Vec<_>>()
+            (0..5).map(|_| r.on_error(&transient(), Duration::ZERO, &mut rng)).collect::<Vec<_>>()
         };
         assert_eq!(run(), run(), "a replayed outage must retry identically");
     }

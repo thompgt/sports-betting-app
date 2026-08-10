@@ -1,0 +1,78 @@
+name: CI
+
+# A repository whose selling point is rigour has to be able to demonstrate it on
+# every push rather than on the author's machine. The four Rust gates are run as
+# separate steps so a failure names itself in the job summary: "clippy" and
+# "fmt" are different problems with different fixes, and a single `make check`
+# would report both as "check".
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A warning that nobody reads is a warning that is not enforced. Everything the
+  # compiler flags fails the build here.
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        # Pinned to the edition-2024 floor the workspace declares, so a
+        # rust-version bump has to be deliberate rather than arriving with
+        # whatever stable happens to be that week.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        # --all-targets so the test modules are linted too; most of this
+        # workspace's code lives in `#[cfg(test)]` blocks and skipping them
+        # would leave the majority of it unchecked.
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+      - name: cargo build --release
+        # The release profile uses fat LTO and one codegen unit, which is where
+        # miscompiles and long-tail build breakages actually show up.
+        run: cargo build --workspace --release
+
+  python:
+    name: python (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        # The service's own dependencies, not a machine-wide freeze. Playwright
+        # is in requirements.txt for the docs scripts and needs a browser
+        # download that the test suite never touches, so it is skipped here.
+        run: |
+          python -m pip install --upgrade pip
+          grep -v '^playwright' requirements.txt | pip install -r /dev/stdin
+
+      - name: pytest
+        run: python -m pytest -q

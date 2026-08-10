@@ -97,11 +97,7 @@ pub struct MeanReversion {
 
 impl MeanReversion {
     pub fn new(id: StrategyId, cfg: ReversionConfig) -> Self {
-        MeanReversion {
-            id,
-            cfg,
-            stats: StatsRecorder::default(),
-        }
+        MeanReversion { id, cfg, stats: StatsRecorder::default() }
     }
 
     pub fn config(&self) -> &ReversionConfig {
@@ -221,10 +217,7 @@ impl Strategy for MeanReversion {
             // The dislocation is gone; a resting fade at a price nobody wants
             // is now just a free option written to the market.
             for o in view.resting {
-                out.push(Action::Cancel {
-                    order_id: o.id,
-                    reason: "fade-expired".into(),
-                });
+                out.push(Action::Cancel { order_id: o.id, reason: "fade-expired".into() });
             }
         }
 
@@ -243,8 +236,8 @@ impl Strategy for MeanReversion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::harness::*;
     use crate::strategy::RestingOrder;
+    use crate::strategy::harness::*;
     use edge_book::order::TimeInForce;
     use edge_core::types::{OrderId, Ts};
 
@@ -304,15 +297,10 @@ mod tests {
 
         let m = crate::strategies::momentum::Momentum::new(
             StrategyId(3),
-            crate::strategies::momentum::MomentumConfig {
-                max_spread: 0.05,
-                ..Default::default()
-            },
+            crate::strategies::momentum::MomentumConfig { max_spread: 0.05, ..Default::default() },
         );
-        let g = feats(
-            0.50,
-            &[("trend", 0.3), ("order_flow", 0.9), ("spread", 0.02), ("z_score", 3.0)],
-        );
+        let g =
+            feats(0.50, &[("trend", 0.3), ("order_flow", 0.9), ("spread", 0.02), ("z_score", 3.0)]);
         let mut v2 = sim.plain();
         v2.features = Some(&g);
         assert!(m.signal(&v2).is_some(), "momentum owns this book");
@@ -354,10 +342,7 @@ mod tests {
     fn size_grows_with_the_dislocation_but_is_capped() {
         let r = rev();
         assert!(r.size_for(3.0) > r.size_for(2.0));
-        assert_eq!(
-            r.size_for(50.0),
-            (r.config().base_size as f64 * r.config().size_scale) as i64
-        );
+        assert_eq!(r.size_for(50.0), (r.config().base_size as f64 * r.config().size_scale) as i64);
     }
 
     #[test]

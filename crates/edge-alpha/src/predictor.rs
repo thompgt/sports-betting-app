@@ -63,10 +63,7 @@ impl Default for Standardizer {
 
 impl Standardizer {
     pub fn new() -> Self {
-        Standardizer {
-            stats: vec![Welford::new(); N_FEATURES],
-            clip: 5.0,
-        }
+        Standardizer { stats: vec![Welford::new(); N_FEATURES], clip: 5.0 }
     }
 
     pub fn observe(&mut self, f: &Features) {
@@ -240,7 +237,8 @@ impl Predictor {
     /// Weights paired with their feature names, largest magnitude first. The
     /// first thing to look at when a model starts behaving strangely.
     pub fn attribution(&self) -> Vec<(&'static str, f64)> {
-        let mut v: Vec<_> = FEATURE_NAMES.iter().copied().zip(self.weights.iter().copied()).collect();
+        let mut v: Vec<_> =
+            FEATURE_NAMES.iter().copied().zip(self.weights.iter().copied()).collect();
         v.sort_by(|a, b| b.1.abs().partial_cmp(&a.1.abs()).unwrap());
         v
     }
@@ -314,7 +312,8 @@ impl Predictor {
         let score: f64 = self.weights.iter().zip(z.iter()).map(|(w, x)| w * x).sum();
         let market_logit = market.logit();
 
-        let residual = (self.cal_a * score + self.cal_b).clamp(-self.cfg.max_residual, self.cfg.max_residual);
+        let residual =
+            (self.cal_a * score + self.cal_b).clamp(-self.cfg.max_residual, self.cfg.max_residual);
         let model = Prob::from_logit(market_logit + residual);
 
         let weight = self.weight();
@@ -324,15 +323,7 @@ impl Predictor {
         // being averaged.
         let fair = Prob::from_logit(market_logit + weight * residual);
 
-        Prediction {
-            z,
-            market_logit,
-            score,
-            market,
-            model,
-            fair,
-            weight,
-        }
+        Prediction { z, market_logit, score, market, model, fair, weight }
     }
 
     /// Learn from a resolved prediction.
@@ -348,7 +339,8 @@ impl Predictor {
         let y = if outcome { 1.0 } else { 0.0 };
 
         // Base weights, against the uncalibrated residual.
-        let p_raw = sigmoid(p.market_logit + p.score.clamp(-self.cfg.max_residual, self.cfg.max_residual));
+        let p_raw =
+            sigmoid(p.market_logit + p.score.clamp(-self.cfg.max_residual, self.cfg.max_residual));
         let err = p_raw - y;
         for i in 0..N_FEATURES {
             let g = err * p.z[i] + self.cfg.l2 * self.weights[i];
@@ -522,10 +514,7 @@ mod tests {
 
     #[test]
     fn the_residual_is_bounded_however_extreme_the_input() {
-        let mut p = Predictor::new(PredictorConfig {
-            max_residual: 1.0,
-            ..Default::default()
-        });
+        let mut p = Predictor::new(PredictorConfig { max_residual: 1.0, ..Default::default() });
         // Force a large weight by hand, then check the clamp holds.
         let mut rng = Rng::new(5);
         for _ in 0..100 {

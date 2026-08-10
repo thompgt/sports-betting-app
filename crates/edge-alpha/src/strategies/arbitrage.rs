@@ -36,7 +36,9 @@ use edge_core::fees::Liquidity;
 use edge_core::types::{Leg, MarketId, Price, Qty, Side, StrategyId};
 use serde::{Deserialize, Serialize};
 
-use crate::strategy::{Action, EventView, MarketView, OrderIntent, StatsRecorder, Strategy, StrategyStats};
+use crate::strategy::{
+    Action, EventView, MarketView, OrderIntent, StatsRecorder, Strategy, StrategyStats,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ArbConfig {
@@ -115,11 +117,7 @@ pub struct Arbitrage {
 
 impl Arbitrage {
     pub fn new(id: StrategyId, cfg: ArbConfig) -> Self {
-        Arbitrage {
-            id,
-            cfg,
-            stats: StatsRecorder::default(),
-        }
+        Arbitrage { id, cfg, stats: StatsRecorder::default() }
     }
 
     pub fn config(&self) -> &ArbConfig {
@@ -148,11 +146,7 @@ impl Arbitrage {
         if !event.all_tradable() {
             return None;
         }
-        if event
-            .markets
-            .iter()
-            .any(|m| m.time_left() < self.cfg.min_seconds_left)
-        {
+        if event.markets.iter().any(|m| m.time_left() < self.cfg.min_seconds_left) {
             return None;
         }
 
@@ -179,7 +173,8 @@ impl Arbitrage {
         ev::arbitrage(&costs)?;
 
         // Size on the *thinnest* leg. Anything more is naked exposure.
-        let by_notional = (self.cfg.max_notional / costs.iter().sum::<f64>().max(1e-9)).floor() as i64;
+        let by_notional =
+            (self.cfg.max_notional / costs.iter().sum::<f64>().max(1e-9)).floor() as i64;
         let qty = available.min(self.cfg.max_size).min(by_notional).max(0);
         if qty <= 0 {
             return None;
@@ -199,12 +194,7 @@ impl Arbitrage {
         Some(ArbOpportunity {
             legs: legs
                 .into_iter()
-                .map(|(market, price)| ArbLeg {
-                    market,
-                    side: Side::Buy,
-                    price,
-                    qty: Qty(qty),
-                })
+                .map(|(market, price)| ArbLeg { market, side: Side::Buy, price, qty: Qty(qty) })
                 .collect(),
             cost: sized_cost,
             profit_per_set: profit,
@@ -269,10 +259,7 @@ impl Arbitrage {
         // two venues listing the same outcome are one leg, not two, and
         // counting both inflates the cost of a real cover into a miss.
         if outcomes.len() >= 2 && event.markets.iter().all(|m| m.spec.leg == Leg::Yes) {
-            let legs: Vec<_> = outcomes
-                .iter()
-                .filter_map(|o| cheapest(Leg::Yes, o))
-                .collect();
+            let legs: Vec<_> = outcomes.iter().filter_map(|o| cheapest(Leg::Yes, o)).collect();
             if legs.len() == outcomes.len() {
                 return Some(legs);
             }
@@ -365,12 +352,7 @@ mod tests {
 
     fn scan(venues: &[Venue], cfg: ArbConfig) -> Option<ArbOpportunity> {
         let views: Vec<_> = venues.iter().map(|v| v.sim.plain()).collect();
-        let ev = EventView {
-            event: EVENT,
-            markets: &views,
-            bankroll: 10_000.0,
-            now: Ts(0),
-        };
+        let ev = EventView { event: EVENT, markets: &views, bankroll: 10_000.0, now: Ts(0) };
         Arbitrage::new(StrategyId(5), cfg).scan(&ev)
     }
 
@@ -381,23 +363,13 @@ mod tests {
 
     #[test]
     fn a_zero_profit_floor_is_rejected() {
-        assert!(
-            ArbConfig {
-                min_profit: 0.0,
-                ..Default::default()
-            }
-            .validate()
-            .is_err()
-        );
+        assert!(ArbConfig { min_profit: 0.0, ..Default::default() }.validate().is_err());
     }
 
     #[test]
     fn yes_and_no_summing_below_a_dollar_is_bought_on_both_legs() {
         // 46c + 51c = 97c for a pair that settles at $1.
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 46, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let v = [Venue::new(1, 1, Leg::Yes, 46, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         let opp = scan(&v, ArbConfig::default()).expect("3c of arbitrage");
         assert_eq!(opp.legs.len(), 2);
         assert!(opp.legs.iter().all(|l| l.side == Side::Buy));
@@ -409,10 +381,7 @@ mod tests {
     fn legs_are_sized_on_the_thinnest_side() {
         // 500 offered on one leg, 40 on the other: this is a 40-lot arbitrage.
         // Sizing on 500 would leave 460 contracts of naked exposure.
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 46, 500),
-            Venue::new(2, 2, Leg::No, 51, 40),
-        ];
+        let v = [Venue::new(1, 1, Leg::Yes, 46, 500), Venue::new(2, 2, Leg::No, 51, 40)];
         let opp = scan(&v, ArbConfig::default()).unwrap();
         assert_eq!(opp.qty, Qty(40));
         assert!(opp.legs.iter().all(|l| l.qty == Qty(40)));
@@ -420,10 +389,7 @@ mod tests {
 
     #[test]
     fn a_pair_summing_above_a_dollar_is_not_an_arbitrage() {
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 52, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let v = [Venue::new(1, 1, Leg::Yes, 52, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         assert!(scan(&v, ArbConfig::default()).is_none());
     }
 
@@ -431,19 +397,9 @@ mod tests {
     fn a_margin_too_thin_to_survive_legging_out_is_declined() {
         // 99c: one cent of profit. Real, and whether it is worth the risk of
         // being left holding one leg is exactly what the floor decides.
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 48, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let v = [Venue::new(1, 1, Leg::Yes, 48, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         assert!(
-            scan(
-                &v,
-                ArbConfig {
-                    min_profit: 0.02,
-                    ..Default::default()
-                }
-            )
-            .is_none(),
+            scan(&v, ArbConfig { min_profit: 0.02, ..Default::default() }).is_none(),
             "a two-cent floor should reject a one-cent arbitrage"
         );
         assert!(
@@ -454,10 +410,7 @@ mod tests {
 
     #[test]
     fn fees_are_subtracted_before_anything_is_called_an_arbitrage() {
-        let mut v = [
-            Venue::new(1, 1, Leg::Yes, 46, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let mut v = [Venue::new(1, 1, Leg::Yes, 46, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         assert!(scan(&v, ArbConfig::default()).is_some(), "3c gross is there");
 
         // The same prices under Kalshi's taker schedule: ~1.5c a leg near the
@@ -553,55 +506,32 @@ mod tests {
 
     #[test]
     fn a_halted_leg_kills_the_whole_arbitrage() {
-        let mut v = [
-            Venue::new(1, 1, Leg::Yes, 46, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let mut v = [Venue::new(1, 1, Leg::Yes, 46, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         v[1].sim.spec.status = edge_core::market::MarketStatus::Halted;
         assert!(scan(&v, ArbConfig::default()).is_none());
     }
 
     #[test]
     fn notional_caps_the_size_even_when_depth_allows_more() {
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 46, 100_000),
-            Venue::new(2, 2, Leg::No, 51, 100_000),
-        ];
-        let opp = scan(
-            &v,
-            ArbConfig {
-                max_notional: 97.0,
-                max_size: 1_000_000,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let v = [Venue::new(1, 1, Leg::Yes, 46, 100_000), Venue::new(2, 2, Leg::No, 51, 100_000)];
+        let opp =
+            scan(&v, ArbConfig { max_notional: 97.0, max_size: 1_000_000, ..Default::default() })
+                .unwrap();
         assert_eq!(opp.qty, Qty(100), "$97 of capital at 97c a set");
     }
 
     #[test]
     fn nothing_is_attempted_close_to_resolution() {
-        let mut v = [
-            Venue::new(1, 1, Leg::Yes, 46, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let mut v = [Venue::new(1, 1, Leg::Yes, 46, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         v[0].sim.spec.closes_at = Some(Ts(30_000_000_000));
         assert!(scan(&v, ArbConfig::default()).is_none());
     }
 
     #[test]
     fn every_leg_is_sent_immediate_or_cancel() {
-        let v = [
-            Venue::new(1, 1, Leg::Yes, 46, 200),
-            Venue::new(2, 2, Leg::No, 51, 200),
-        ];
+        let v = [Venue::new(1, 1, Leg::Yes, 46, 200), Venue::new(2, 2, Leg::No, 51, 200)];
         let views: Vec<_> = v.iter().map(|x| x.sim.plain()).collect();
-        let ev = EventView {
-            event: EVENT,
-            markets: &views,
-            bankroll: 10_000.0,
-            now: Ts(0),
-        };
+        let ev = EventView { event: EVENT, markets: &views, bankroll: 10_000.0, now: Ts(0) };
         let mut a = Arbitrage::new(StrategyId(5), ArbConfig::default());
         let mut out = Vec::new();
         a.on_event(&ev, &mut out);

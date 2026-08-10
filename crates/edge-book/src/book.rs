@@ -38,9 +38,7 @@ use std::collections::HashMap;
 use edge_core::types::{MICROS, MarketId, Notional, OrderId, Price, Qty, Side, Ts};
 
 use crate::bitset::TickBitset;
-use crate::order::{
-    BookEvent, Fill, Order, RejectReason, SelfTradePrevention, TimeInForce,
-};
+use crate::order::{BookEvent, Fill, Order, RejectReason, SelfTradePrevention, TimeInForce};
 
 const NIL: u32 = u32::MAX;
 
@@ -61,12 +59,7 @@ struct Level {
 }
 
 impl Level {
-    const EMPTY: Level = Level {
-        head: NIL,
-        tail: NIL,
-        qty: 0,
-        count: 0,
-    };
+    const EMPTY: Level = Level { head: NIL, tail: NIL, qty: 0, count: 0 };
 
     #[inline]
     fn is_empty(&self) -> bool {
@@ -240,11 +233,7 @@ impl OrderBook {
     }
 
     pub fn total_qty(&self, side: Side) -> Qty {
-        Qty(self
-            .side_bitmap(side)
-            .iter_ascending()
-            .map(|t| self.levels[t].qty)
-            .sum())
+        Qty(self.side_bitmap(side).iter_ascending().map(|t| self.levels[t].qty).sum())
     }
 
     pub fn last_trade(&self) -> Option<Price> {
@@ -303,20 +292,10 @@ impl OrderBook {
 
     fn alloc(&mut self, order: Order) -> u32 {
         if let Some(i) = self.free.pop() {
-            self.nodes[i as usize] = Node {
-                order,
-                prev: NIL,
-                next: NIL,
-                occupied: true,
-            };
+            self.nodes[i as usize] = Node { order, prev: NIL, next: NIL, occupied: true };
             i
         } else {
-            self.nodes.push(Node {
-                order,
-                prev: NIL,
-                next: NIL,
-                occupied: true,
-            });
+            self.nodes.push(Node { order, prev: NIL, next: NIL, occupied: true });
             (self.nodes.len() - 1) as u32
         }
     }
@@ -358,9 +337,7 @@ impl OrderBook {
     fn unlink(&mut self, node: u32) -> Order {
         let n = self.nodes[node as usize];
         let order = n.order;
-        let t = self
-            .tick(order.price)
-            .expect("a resting order is always on the grid");
+        let t = self.tick(order.price).expect("a resting order is always on the grid");
 
         if n.prev != NIL {
             self.nodes[n.prev as usize].next = n.next;
@@ -617,12 +594,9 @@ impl OrderBook {
                 market,
                 resting_qty: resting,
             }),
-            Err(reason) => out.push(BookEvent::Rejected {
-                seq: next(),
-                order: order.id,
-                market,
-                reason,
-            }),
+            Err(reason) => {
+                out.push(BookEvent::Rejected { seq: next(), order: order.id, market, reason })
+            }
         }
     }
 
@@ -663,15 +637,8 @@ impl OrderBook {
         for t in 0..self.n_ticks {
             let level = &self.levels[t];
             let occupied = self.bids.get(t) || self.asks.get(t);
-            assert_eq!(
-                occupied,
-                !level.is_empty(),
-                "bitmap disagrees with level {t}"
-            );
-            assert!(
-                !(self.bids.get(t) && self.asks.get(t)),
-                "level {t} is on both sides"
-            );
+            assert_eq!(occupied, !level.is_empty(), "bitmap disagrees with level {t}");
+            assert!(!(self.bids.get(t) && self.asks.get(t)), "level {t} is on both sides");
             if level.is_empty() {
                 assert_eq!(level.qty, 0, "empty level {t} has qty");
                 continue;
@@ -720,14 +687,16 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            Fixture {
-                book: OrderBook::new(MKT, CENT),
-                seq: 0,
-                next_id: 0,
-            }
+            Fixture { book: OrderBook::new(MKT, CENT), seq: 0, next_id: 0 }
         }
 
-        fn submit(&mut self, strategy: u16, side: Side, cents: i64, qty: i64) -> (OrderId, Vec<BookEvent>) {
+        fn submit(
+            &mut self,
+            strategy: u16,
+            side: Side,
+            cents: i64,
+            qty: i64,
+        ) -> (OrderId, Vec<BookEvent>) {
             self.submit_with(strategy, side, cents, qty, |o| o)
         }
 
@@ -918,13 +887,7 @@ mod tests {
         let mut f = Fixture::new();
         f.submit(1, Side::Sell, 45, 10);
         let (_, ev) = f.submit_with(2, Side::Buy, 45, 10, |o| o.with_tif(TimeInForce::PostOnly));
-        assert!(matches!(
-            ev[0],
-            BookEvent::Rejected {
-                reason: RejectReason::WouldCross,
-                ..
-            }
-        ));
+        assert!(matches!(ev[0], BookEvent::Rejected { reason: RejectReason::WouldCross, .. }));
         assert_eq!(f.book.best_ask_qty(), Qty(10), "the book is untouched");
 
         // One tick away it rests happily.
@@ -953,10 +916,7 @@ mod tests {
         let (_, ev) = f.submit_with(2, Side::Buy, 45, 25, |o| o.with_tif(TimeInForce::Fok));
         assert!(matches!(
             ev[0],
-            BookEvent::Rejected {
-                reason: RejectReason::InsufficientLiquidity,
-                ..
-            }
+            BookEvent::Rejected { reason: RejectReason::InsufficientLiquidity, .. }
         ));
         assert_eq!(f.book.best_ask_qty(), Qty(10), "a failed FOK touches nothing");
 
@@ -988,24 +948,12 @@ mod tests {
         let mut f = Fixture::new();
         for bad in [Price(405_000), Price::ZERO, Price::ONE, Price(-10_000)] {
             f.next_id += 1;
-            let order = Order::limit(
-                OrderId(f.next_id),
-                MKT,
-                StrategyId(1),
-                Side::Buy,
-                bad,
-                Qty(10),
-            );
+            let order =
+                Order::limit(OrderId(f.next_id), MKT, StrategyId(1), Side::Buy, bad, Qty(10));
             let mut out = Vec::new();
             f.book.submit(order, &mut f.seq, &mut out);
             assert!(
-                matches!(
-                    out[0],
-                    BookEvent::Rejected {
-                        reason: RejectReason::InvalidPrice,
-                        ..
-                    }
-                ),
+                matches!(out[0], BookEvent::Rejected { reason: RejectReason::InvalidPrice, .. }),
                 "price {bad} should be rejected, got {:?}",
                 out[0]
             );
@@ -1017,13 +965,7 @@ mod tests {
     fn zero_and_duplicate_orders_are_rejected() {
         let mut f = Fixture::new();
         let (_, ev) = f.submit(1, Side::Buy, 40, 0);
-        assert!(matches!(
-            ev[0],
-            BookEvent::Rejected {
-                reason: RejectReason::InvalidQty,
-                ..
-            }
-        ));
+        assert!(matches!(ev[0], BookEvent::Rejected { reason: RejectReason::InvalidQty, .. }));
 
         let (id, _) = f.submit(1, Side::Buy, 40, 10);
         let mut out = Vec::new();
@@ -1031,10 +973,7 @@ mod tests {
         f.book.submit(dup, &mut f.seq, &mut out);
         assert!(matches!(
             out[0],
-            BookEvent::Rejected {
-                reason: RejectReason::DuplicateOrderId,
-                ..
-            }
+            BookEvent::Rejected { reason: RejectReason::DuplicateOrderId, .. }
         ));
     }
 
@@ -1056,9 +995,8 @@ mod tests {
     fn self_trade_prevention_can_cancel_the_incoming_order_instead() {
         let mut f = Fixture::new();
         f.submit(1, Side::Sell, 45, 10);
-        let (_, ev) = f.submit_with(1, Side::Buy, 45, 10, |o| {
-            o.with_stp(SelfTradePrevention::CancelIncoming)
-        });
+        let (_, ev) = f
+            .submit_with(1, Side::Buy, 45, 10, |o| o.with_stp(SelfTradePrevention::CancelIncoming));
         assert!(Fixture::fills(&ev).is_empty());
         assert!(matches!(ev.last().unwrap(), BookEvent::Expired { .. }));
         assert_eq!(f.book.best_ask_qty(), Qty(10), "the resting order survives");
@@ -1068,9 +1006,8 @@ mod tests {
     fn decrement_both_removes_the_overlap_without_a_trade() {
         let mut f = Fixture::new();
         f.submit(1, Side::Sell, 45, 10);
-        let (_, ev) = f.submit_with(1, Side::Buy, 45, 4, |o| {
-            o.with_stp(SelfTradePrevention::DecrementBoth)
-        });
+        let (_, ev) =
+            f.submit_with(1, Side::Buy, 45, 4, |o| o.with_stp(SelfTradePrevention::DecrementBoth));
         assert!(Fixture::fills(&ev).is_empty());
         assert_eq!(f.book.best_ask_qty(), Qty(6), "both sides shrink by 4");
         assert!(f.book.best_bid().is_none());

@@ -63,21 +63,49 @@ impl Default for AssemblerConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// A market was interned for the first time.
-    Registered { market: MarketId, event: EventId },
+    Registered {
+        market: MarketId,
+        event: EventId,
+    },
     /// The book changed.
-    Book { market: MarketId, ts: Ts },
-    Trade { market: MarketId, price: Price, qty: Qty, taker: Side, ts: Ts },
-    Status { market: MarketId, status: MarketStatus, ts: Ts },
-    Settled { market: MarketId, outcome: bool, ts: Ts },
+    Book {
+        market: MarketId,
+        ts: Ts,
+    },
+    Trade {
+        market: MarketId,
+        price: Price,
+        qty: Qty,
+        taker: Side,
+        ts: Ts,
+    },
+    Status {
+        market: MarketId,
+        status: MarketStatus,
+        ts: Ts,
+    },
+    Settled {
+        market: MarketId,
+        outcome: bool,
+        ts: Ts,
+    },
     /// A sequence number was skipped. The book is wrong and the caller must
     /// re-snapshot; until it does, the market is stale and untradable.
-    Gap { market: MarketId, expected: u64, got: u64 },
+    Gap {
+        market: MarketId,
+        expected: u64,
+        got: u64,
+    },
     /// The book was believed and is now trusted again after a snapshot.
-    Recovered { market: MarketId },
+    Recovered {
+        market: MarketId,
+    },
     /// An update named a ticker no listing has been seen for. Not an error —
     /// venues routinely stream a market before publishing its metadata — but
     /// the update is dropped rather than guessed at.
-    Unknown { ticker: String },
+    Unknown {
+        ticker: String,
+    },
 }
 
 #[derive(Debug)]
@@ -135,8 +163,7 @@ impl Assembler {
         match self.books.get(&market) {
             None => true,
             Some(s) => {
-                s.stale
-                    || (now.0 - s.last_update.0) as f64 / 1e9 > self.cfg.stale_after_secs
+                s.stale || (now.0 - s.last_update.0) as f64 / 1e9 > self.cfg.stale_after_secs
             }
         }
     }
@@ -319,7 +346,8 @@ impl Assembler {
             self.drop_crossed(market, side, price);
         }
 
-        let existing = self.books.get(&market).and_then(|s| s.levels.get(&(side, price.0)).copied());
+        let existing =
+            self.books.get(&market).and_then(|s| s.levels.get(&(side, price.0)).copied());
 
         if qty.get() <= 0 {
             if let (Some(id), Some(s)) = (existing, self.books.get_mut(&market)) {
@@ -354,8 +382,8 @@ impl Assembler {
         let id = self.next_order_id();
         let mut seq = self.seq;
         if let Some(s) = self.books.get_mut(&market) {
-            let order = Order::limit(id, market, FEED, side, price, qty)
-                .with_tif(TimeInForce::PostOnly);
+            let order =
+                Order::limit(id, market, FEED, side, price, qty).with_tif(TimeInForce::PostOnly);
             let mut events: Vec<BookEvent> = Vec::new();
             s.book.submit(order, &mut seq, &mut events);
             // PostOnly makes a crossing insert a rejection rather than a trade.
@@ -422,7 +450,13 @@ mod tests {
         out
     }
 
-    fn book(a: &mut Assembler, m: MarketId, bids: &[(i64, i64)], asks: &[(i64, i64)], seq: u64) -> Vec<Event> {
+    fn book(
+        a: &mut Assembler,
+        m: MarketId,
+        bids: &[(i64, i64)],
+        asks: &[(i64, i64)],
+        seq: u64,
+    ) -> Vec<Event> {
         let _ = m;
         apply(a, VenueUpdate::Book { ticker: "T".into(), book: snapshot(bids, asks, seq) })
     }
@@ -628,7 +662,10 @@ mod tests {
             &mut a,
             VenueUpdate::Settled { ticker: "T".into(), outcome: true, ts: Ts::from_secs(103) },
         );
-        assert_eq!(events, vec![Event::Settled { market: m, outcome: true, ts: Ts::from_secs(103) }]);
+        assert_eq!(
+            events,
+            vec![Event::Settled { market: m, outcome: true, ts: Ts::from_secs(103) }]
+        );
         assert_eq!(a.registry().get(m).unwrap().status, MarketStatus::Settled);
         assert!(a.book(m).unwrap().is_empty());
     }

@@ -80,9 +80,7 @@ impl MatchingEngine {
 
     /// Start tracking a market. Idempotent, so a catalogue refresh is safe.
     pub fn add_market(&mut self, market: MarketId, tick_size: i64) {
-        self.books
-            .entry(market)
-            .or_insert_with(|| OrderBook::new(market, tick_size));
+        self.books.entry(market).or_insert_with(|| OrderBook::new(market, tick_size));
     }
 
     pub fn book(&self, market: MarketId) -> Option<&OrderBook> {
@@ -257,9 +255,7 @@ impl MatchingEngine {
 
     fn cancel_one(&mut self, id: OrderId) {
         let market = self.order_market.get(&id).copied();
-        let cancelled = market
-            .and_then(|m| self.books.get_mut(&m))
-            .and_then(|b| b.cancel(id));
+        let cancelled = market.and_then(|m| self.books.get_mut(&m)).and_then(|b| b.cancel(id));
         self.seq += 1;
         match cancelled {
             Some(order) => {
@@ -305,7 +301,14 @@ mod tests {
         e
     }
 
-    fn order(e: &mut MatchingEngine, m: MarketId, s: u16, side: Side, cents: i64, qty: i64) -> Order {
+    fn order(
+        e: &mut MatchingEngine,
+        m: MarketId,
+        s: u16,
+        side: Side,
+        cents: i64,
+        qty: i64,
+    ) -> Order {
         let id = e.next_order_id();
         Order::limit(id, m, StrategyId(s), side, Price::from_cents(cents), Qty(qty))
     }
@@ -341,10 +344,7 @@ mod tests {
         let ev = e.apply(Command::Submit(o), Ts::ZERO, 0);
         assert!(matches!(
             ev[0],
-            BookEvent::Rejected {
-                reason: RejectReason::MarketNotTradable,
-                ..
-            }
+            BookEvent::Rejected { reason: RejectReason::MarketNotTradable, .. }
         ));
     }
 
@@ -370,13 +370,7 @@ mod tests {
         e.apply(Command::Submit(o), Ts::ZERO, 0);
         e.apply(Command::Cancel(id), Ts::ZERO, 0);
         let ev = e.apply(Command::Cancel(id), Ts::ZERO, 0);
-        assert!(matches!(
-            ev[0],
-            BookEvent::Rejected {
-                reason: RejectReason::UnknownOrder,
-                ..
-            }
-        ));
+        assert!(matches!(ev[0], BookEvent::Rejected { reason: RejectReason::UnknownOrder, .. }));
     }
 
     #[test]
@@ -410,10 +404,7 @@ mod tests {
         assert!(
             ev.iter().all(|x| matches!(
                 x,
-                BookEvent::Rejected {
-                    reason: RejectReason::UnknownOrder,
-                    ..
-                }
+                BookEvent::Rejected { reason: RejectReason::UnknownOrder, .. }
             )),
             "a stale index entry must reject, not panic"
         );

@@ -37,16 +37,13 @@ pub fn decimal_to_american(decimal: f64) -> Result<i32> {
         });
     }
     let b = decimal - 1.0;
-    Ok(if b >= 1.0 {
-        (b * 100.0).round() as i32
-    } else {
-        -((100.0 / b).round() as i32)
-    })
+    Ok(if b >= 1.0 { (b * 100.0).round() as i32 } else { -((100.0 / b).round() as i32) })
 }
 
 /// Fractional odds (`numerator/denominator`, e.g. 5/2) to decimal.
 pub fn fractional_to_decimal(numerator: f64, denominator: f64) -> Result<f64> {
-    if !numerator.is_finite() || !denominator.is_finite() || denominator <= 0.0 || numerator <= 0.0 {
+    if !numerator.is_finite() || !denominator.is_finite() || denominator <= 0.0 || numerator <= 0.0
+    {
         return Err(EdgeError::InvalidOdds {
             context: "fractional odds must be positive",
             value: numerator,

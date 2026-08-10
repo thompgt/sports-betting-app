@@ -99,11 +99,7 @@ pub struct QuoteMaker {
 
 impl QuoteMaker {
     pub fn new(id: StrategyId, cfg: QuoteConfig) -> Self {
-        QuoteMaker {
-            id,
-            cfg,
-            stats: StatsRecorder::default(),
-        }
+        QuoteMaker { id, cfg, stats: StatsRecorder::default() }
     }
 
     pub fn config(&self) -> &QuoteConfig {
@@ -144,7 +140,8 @@ impl QuoteMaker {
 
         // The full spread is twice the half, so half the round trip is the
         // break-even half-spread.
-        let base = self.cfg.min_half_spread.max(round_trip / 2.0) + self.cfg.vol_multiple * vol_prob;
+        let base =
+            self.cfg.min_half_spread.max(round_trip / 2.0) + self.cfg.vol_multiple * vol_prob;
 
         // Widen smoothly over the final hour rather than at a cliff, so a
         // market crossing the threshold does not produce a jump in quotes.
@@ -176,10 +173,9 @@ impl QuoteMaker {
         let room_buy = ((max_inv - pos) as f64 / max_inv.max(1) as f64).clamp(0.0, 1.0);
         let room_sell = ((max_inv + pos) as f64 / max_inv.max(1) as f64).clamp(0.0, 1.0);
 
-        for (side, target, room) in [
-            (Side::Buy, r - half, room_buy),
-            (Side::Sell, r + half, room_sell),
-        ] {
+        for (side, target, room) in
+            [(Side::Buy, r - half, room_buy), (Side::Sell, r + half, room_sell)]
+        {
             let qty = (self.cfg.size as f64 * room).round() as i64;
             if qty <= 0 {
                 continue;
@@ -200,11 +196,7 @@ impl QuoteMaker {
             if !price.is_tradable() {
                 continue;
             }
-            out.push(DesiredQuote {
-                side,
-                price,
-                qty: Qty(qty),
-            });
+            out.push(DesiredQuote { side, price, qty: Qty(qty) });
         }
         out
     }
@@ -281,8 +273,8 @@ impl Strategy for QuoteMaker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategy::harness::*;
     use crate::strategy::RestingOrder;
+    use crate::strategy::harness::*;
     use edge_core::types::{OrderId, Ts};
 
     fn maker() -> QuoteMaker {
@@ -367,16 +359,14 @@ mod tests {
         sim.spec.fee = edge_core::fees::FeeModel::KALSHI_STANDARD;
         let m = QuoteMaker::new(
             StrategyId(1),
-            QuoteConfig {
-                min_half_spread: 0.0001,
-                ..Default::default()
-            },
+            QuoteConfig { min_half_spread: 0.0001, ..Default::default() },
         );
         let fair = Prob::new(0.50).unwrap();
         // Kalshi rebates makers, so a floor built on the maker rate alone would
         // be zero. The round trip a maker actually runs is maker in, taker out.
-        let round_trip = sim.spec.fee.fee_per_contract(Price::from_cents(50), Qty(25), Liquidity::Maker)
-            + sim.spec.fee.fee_per_contract(Price::from_cents(50), Qty(25), Liquidity::Taker);
+        let round_trip =
+            sim.spec.fee.fee_per_contract(Price::from_cents(50), Qty(25), Liquidity::Maker)
+                + sim.spec.fee.fee_per_contract(Price::from_cents(50), Qty(25), Liquidity::Taker);
         assert!(round_trip > 0.0, "fixture should charge a fee");
         assert!(m.half_spread(&sim.plain(), fair) >= round_trip / 2.0);
     }
@@ -397,13 +387,12 @@ mod tests {
         }];
         let acts = sim.step(&mut m, &sim.plain());
         assert!(
-            !acts.iter().any(|a| matches!(a, Action::Cancel { order_id, .. } if *order_id == OrderId(1))),
+            !acts
+                .iter()
+                .any(|a| matches!(a, Action::Cancel { order_id, .. } if *order_id == OrderId(1))),
             "a good quote should not be churned: {acts:?}"
         );
-        assert!(
-            !places(&acts).iter().any(|p| p.side == Side::Buy),
-            "and should not be duplicated"
-        );
+        assert!(!places(&acts).iter().any(|p| p.side == Side::Buy), "and should not be duplicated");
     }
 
     #[test]
