@@ -187,9 +187,10 @@ def test_fair_probabilities_are_keyed_by_outcome_not_position():
 
 def test_books_quoting_a_different_outcome_set_are_excluded():
     """A book offering a draw does not belong in a two-way consensus."""
+    two_way = [("Boston Celtics", -140), ("Miami Heat", 120)]
     books = [
-        ("TwoWayA", [("Boston Celtics", -110), ("Miami Heat", -110)]),
-        ("TwoWayB", [("Boston Celtics", -110), ("Miami Heat", -110)]),
+        ("TwoWayA", two_way),
+        ("TwoWayB", two_way),
         ("ThreeWay", [("Boston Celtics", 150), ("Draw", 250), ("Miami Heat", 200)]),
     ]
     svc, _ = _service()
@@ -198,6 +199,11 @@ def test_books_quoting_a_different_outcome_set_are_excluded():
 
     # The odd book out is not priced at all, and never contributes to the pool.
     assert "ThreeWay" not in {e.bookmaker_name for e in session.added}
+
+    # The consensus is exactly the two-way books' own fair line - the three-way
+    # book's probabilities (which include a draw) never enter the pool.
+    expected = strip_vig_power_method(
+        [decimal_to_implied_prob(american_to_decimal(p)) for _, p in two_way]
+    )
     fair = _fair_by_outcome(session, "TwoWayA")
-    assert math.isclose(fair["Boston Celtics"], 2.0, rel_tol=1e-9)
-    assert math.isclose(fair["Miami Heat"], 2.0, rel_tol=1e-9)
+    assert math.isclose(fair["Boston Celtics"], 1.0 / expected[0], rel_tol=1e-9)
