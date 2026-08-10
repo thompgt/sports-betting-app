@@ -13,8 +13,16 @@ def test_american_to_decimal():
     assert american_to_decimal(150) == 2.5
     assert american_to_decimal(-200) == 1.5
     assert american_to_decimal(200) == 3.0
-    with pytest.raises(ValueError):
-        american_to_decimal(0)
+    # +100 and -100 are both even money and are the closest valid odds to zero.
+    assert american_to_decimal(100) == 2.0
+    assert american_to_decimal(-100) == 2.0
+
+def test_american_to_decimal_rejects_the_impossible_gap():
+    # No book quotes -99 or +42. Accepting them yields decimal odds below 1.0
+    # and an implied probability above 1, which poisons the devig.
+    for bad in (0, 1, 42, 99, -1, -42, -99):
+        with pytest.raises(ValueError):
+            american_to_decimal(bad)
 
 def test_decimal_to_implied_prob():
     assert decimal_to_implied_prob(2.0) == 0.5

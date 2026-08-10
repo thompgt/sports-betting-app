@@ -5,19 +5,25 @@ import math
 # transform would blow up to +/- infinity.
 _PROB_EPS = 1e-12
 
-def american_to_decimal(odds: int) -> float:
+def american_to_decimal(odds: float) -> float:
     """
     Converts American odds to decimal odds.
     -110 -> 1.909...
     +150 -> 2.5
+
+    American odds have no representation strictly between -100 and +100: both
+    +100 and -100 already mean an even-money bet. A feed emitting -99 or +42 is
+    malformed, and accepting it would yield decimal odds below 1.0 and an
+    implied probability above 1, which then poisons the devig for every other
+    outcome in the market. Mirrors the guard in crates/edge-core/src/odds.rs.
     """
-    if odds == 0:
-        raise ValueError("American odds cannot be zero.")
-    
-    if odds > 0:
+    if odds >= 100:
         return (odds / 100) + 1
-    else:
+    if odds <= -100:
         return (100 / abs(odds)) + 1
+    raise ValueError(
+        f"American odds must be >= +100 or <= -100, got {odds}."
+    )
 
 def decimal_to_implied_prob(decimal_odds: float) -> float:
     """Calculates implied probability from decimal odds."""
