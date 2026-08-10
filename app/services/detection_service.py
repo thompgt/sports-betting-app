@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple, Set
 
 from app.core.config import Settings
@@ -19,6 +19,26 @@ from app.storage.auditor import EdgeAuditor
 
 logger = logging.getLogger(__name__)
 
+def utc_now() -> datetime:
+    """
+    Timezone-aware UTC now. datetime.utcnow() is deprecated and, worse, returns a
+    naive datetime that compares fine against other naive datetimes right up
+    until a tz-aware one arrives from a feed - at which point the comparison
+    raises TypeError.
+    """
+    return datetime.now(timezone.utc)
+
+def as_utc(value: datetime) -> datetime:
+    """
+    Coerces a datetime to tz-aware UTC. Naive values are assumed to already be
+    UTC, which is what every naive timestamp in this codebase means; aware
+    values are converted. This keeps a feed or database that yields either kind
+    from blowing up a comparison.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
 class EdgeCache:
     def __init__(self, ttl_minutes: int = 15, ev_spike_threshold: float = 0.02):
         self.cache: Dict[Tuple[str, str, str], Tuple[datetime, float]] = {}
@@ -27,7 +47,7 @@ class EdgeCache:
 
     def should_record(self, game_id: str, market: str, bookmaker: str, current_ev: float) -> bool:
         key = (game_id, market, bookmaker)
-        now = datetime.utcnow()
+        now = utc_now()
 
         if key not in self.cache:
             self.cache[key] = (now, current_ev)
@@ -211,10 +231,13 @@ class EdgeDetectionService:
 
     def _run_clv_closeouts(self, session) -> None:
         auditor = EdgeAuditor(session)
-        now = datetime.utcnow()
+        now = utc_now()
         for game in self.resolver.games:
             game_id = str(game.id)
-            if game_id in self._closed_games or game.start_time > now:
+            # as_utc() on both sides: a single tz-aware kickoff time used to raise
+            # TypeError here, and the caller's blanket `except` swallowed it -
+            # silently aborting every CLV closeout for the rest of the run.
+            if game_id in self._closed_games or as_utc(game.start_time) > now:
                 continue
 
             for (seen_game_id, market, bookie, outcome), price in self._last_odds_seen.items():

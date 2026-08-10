@@ -96,6 +96,51 @@ def _fair_by_outcome(session: _StubSession, bookmaker: str) -> dict:
     }
 
 
+def test_clv_closeouts_survive_a_timezone_aware_kickoff_time():
+    """
+    A single tz-aware kickoff used to raise TypeError against a naive utcnow(),
+    and the caller's blanket `except` swallowed it - silently aborting every
+    closeout for the rest of the process's life.
+    """
+    from types import SimpleNamespace
+
+    svc, resolver = _service()
+    started_naive = datetime.utcnow() - timedelta(hours=2)
+    started_aware = datetime.now(timezone.utc) - timedelta(hours=3)
+    future_aware = datetime.now(timezone.utc) + timedelta(hours=3)
+
+    naive_id, aware_id, future_id = uuid4(), uuid4(), uuid4()
+    resolver.games = [
+        SimpleNamespace(id=naive_id, start_time=started_naive),
+        SimpleNamespace(id=aware_id, start_time=started_aware),
+        SimpleNamespace(id=future_id, start_time=future_aware),
+    ]
+    for gid in (naive_id, aware_id, future_id):
+        svc._last_odds_seen[(str(gid), "h2h", "BookA", "Boston Celtics")] = 1.91
+
+    closed = []
+
+    class _Auditor:
+        def __init__(self, session):
+            pass
+
+        def close_out_market(self, game_id, market, bookie, price, outcome_name=None):
+            closed.append(game_id)
+
+    import app.services.detection_service as mod
+
+    original = mod.EdgeAuditor
+    mod.EdgeAuditor = _Auditor
+    try:
+        svc._run_clv_closeouts(_StubSession())
+    finally:
+        mod.EdgeAuditor = original
+
+    # Both started games close out; the future one does not.
+    assert set(closed) == {str(naive_id), str(aware_id)}
+    assert svc._closed_games == {str(naive_id), str(aware_id)}
+
+
 def test_pool_log_odds_is_the_logit_mean_and_sums_to_one():
     pooled = pool_log_odds([[0.5, 0.5], [0.8, 0.2]])
     assert math.isclose(sum(pooled), 1.0, abs_tol=1e-12)
