@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use edge_core::fees::FeeModel;
 use edge_core::market::MarketStatus;
 use edge_core::types::{Leg, Price, Qty, Ts, VenueId};
+use futures_util::stream::StreamExt;
 use serde::Deserialize;
 
 use crate::backoff::RetryPolicy;
@@ -212,6 +213,30 @@ pub fn decode_listing(m: &RawMarket) -> Result<Listing> {
 /// rather than its own.
 const READS_PER_SECOND: f64 = 9.0;
 
+/// Book requests in flight at once during a snapshot.
+///
+/// Bounded rather than unlimited: the guard meters the send *rate*, but nothing
+/// bounds how many responses we are waiting on, and a few hundred simultaneous
+/// requests is a good way to exhaust sockets and time every one of them out.
+const BOOK_CONCURRENCY: usize = 8;
+
+/// Failures that cost us one market rather than the whole poll.
+///
+/// Deliberately a whitelist keyed on *meaning*, not on
+/// [`DataError::is_transient`]. Classifying by "is this retryable" and skipping
+/// everything that is not lumps a delisted market together with a schema change
+/// and an expired key — the first is routine and the other two are outages that
+/// must reach an operator.
+fn is_skippable(e: &DataError) -> bool {
+    match e {
+        // The market is gone, which on a live venue happens constantly.
+        DataError::Http { status: 404, .. } => true,
+        // Well-formed, but not something the engine can represent.
+        DataError::Unusable { .. } => true,
+        _ => false,
+    }
+}
+
 /// Kalshi market data over REST.
 #[derive(Debug)]
 pub struct Kalshi<T: Transport> {
@@ -344,13 +369,39 @@ impl<T: Transport> MarketSource for Kalshi<T> {
     }
 
     async fn snapshot(&self, tickers: &[String]) -> Result<Vec<VenueUpdate>> {
-        let mut out = Vec::with_capacity(tickers.len());
-        for t in tickers {
-            match self.book(t).await {
-                Ok(book) => out.push(VenueUpdate::Book { ticker: t.clone(), book }),
-                // One market's book failing must not cost us the others: the
-                // caller asked for a batch and a partial answer is useful.
-                Err(e) if !e.is_transient() => continue,
+        // Fan out. One round trip per ticker done strictly in series makes a
+        // poll take as long as the sum of its requests, which on a few hundred
+        // markets is longer than the poll interval — the snapshot is stale
+        // before it is complete. The guard still meters the sends, so the
+        // concurrency here bounds outstanding requests, not the request rate.
+        let requests: Vec<(usize, String)> = tickers.iter().cloned().enumerate().collect();
+        let mut fetched: Vec<(usize, String, Result<BookSnapshot>)> =
+            futures_util::stream::iter(requests)
+                .map(|(i, ticker)| async move {
+                    let book = self.book(&ticker).await;
+                    (i, ticker, book)
+                })
+                .buffer_unordered(BOOK_CONCURRENCY)
+                .collect()
+                .await;
+
+        // Completion order depends on the network; the result must not. Sorting
+        // back into request order keeps the output — and, when several requests
+        // fail at once, *which* failure is reported — deterministic.
+        fetched.sort_by_key(|(i, _, _)| *i);
+
+        let mut out = Vec::with_capacity(fetched.len());
+        for (_, ticker, result) in fetched {
+            match result {
+                Ok(book) => out.push(VenueUpdate::Book { ticker, book }),
+                // A market that is gone, or that we cannot represent, is
+                // skipped: the caller asked for a batch and a partial answer is
+                // useful. Anything else is propagated, including a decode
+                // failure — a schema change to `orderbook` would otherwise
+                // return an empty snapshot list indistinguishable from a quiet
+                // market, and the engine would trade on an empty universe with
+                // nothing anywhere reporting why.
+                Err(e) if is_skippable(&e) => continue,
                 Err(e) => return Err(e),
             }
         }
@@ -630,6 +681,50 @@ mod tests {
             "an open circuit must cost nothing: {} requests went out",
             k.transport.calls().len()
         );
+    }
+
+    #[tokio::test]
+    async fn a_schema_change_to_the_book_is_reported_rather_than_returning_nothing() {
+        // The failure this guards against: a decode error skipped alongside the
+        // delisted markets, leaving an empty snapshot list that is
+        // indistinguishable from a quiet venue. The engine would then trade
+        // against an empty universe with nothing anywhere saying why.
+        let t = MockTransport::new()
+            .with("markets/A/orderbook", BOOK.as_bytes().to_vec())
+            .with("markets/B/orderbook", br#"{"orderbook": {"yes": "surprise"}}"#.to_vec());
+        let k = kalshi(t);
+        let err = k.snapshot(&["A".into(), "B".into()]).await.unwrap_err();
+        assert!(matches!(err, DataError::Decode { .. }), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_key_is_reported_rather_than_skipped() {
+        // Auth is permanent, like a decode failure, and skipping "everything
+        // that is not retryable" silently swallowed it.
+        let t = MockTransport::new().failing(
+            "markets/A/orderbook",
+            DataError::Auth { venue: VENUE.into(), detail: "expired".into() },
+        );
+        let k = kalshi(t);
+        let err = k.snapshot(&["A".into()]).await.unwrap_err();
+        assert!(matches!(err, DataError::Auth { .. }));
+    }
+
+    #[tokio::test]
+    async fn books_are_fetched_concurrently_but_returned_in_the_order_asked_for() {
+        // Determinism is the constraint that outranks the concurrency: a
+        // recorded session has to replay identically, so completion order must
+        // not leak into the result.
+        let mut t = MockTransport::new();
+        for name in ["A", "B", "C", "D", "E"] {
+            t = t.with(format!("markets/{name}/orderbook"), BOOK.as_bytes().to_vec());
+        }
+        let k = kalshi(t);
+        let tickers: Vec<String> =
+            ["A", "B", "C", "D", "E"].iter().map(|s| s.to_string()).collect();
+        let updates = k.snapshot(&tickers).await.unwrap();
+        let got: Vec<&str> = updates.iter().filter_map(|u| u.ticker()).collect();
+        assert_eq!(got, vec!["A", "B", "C", "D", "E"]);
     }
 
     #[tokio::test]
