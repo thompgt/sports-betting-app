@@ -155,12 +155,10 @@ pub fn monte_carlo_var(
             let yes = latents[slot] < norm_ppf(p_yes);
 
             let held_wins = if pos.qty.get() > 0 { yes } else { !yes };
-            let contracts = pos.qty.get().abs() as f64;
-            pnl += if held_wins {
-                contracts * (1.0 - pos.avg_cost)
-            } else {
-                -contracts * pos.avg_cost
-            };
+            // VaR is a distribution over hypothetical futures, so it works
+            // in dollars; the exact integer basis is converted once, here.
+            let cost = pos.capital_at_risk().dollars();
+            pnl += if held_wins { pos.max_gain().dollars() } else { -cost };
         }
         pnls.push(pnl);
     }
@@ -226,10 +224,9 @@ pub fn parametric_var(
     let mut mean = 0.0;
     let mut sds = Vec::with_capacity(positions.len());
     for (pos, p_yes) in &positions {
-        let contracts = pos.qty.get().abs() as f64;
         let p_win = if pos.qty.get() > 0 { *p_yes } else { 1.0 - *p_yes };
-        let win = contracts * (1.0 - pos.avg_cost);
-        let lose = -contracts * pos.avg_cost;
+        let win = pos.max_gain().dollars();
+        let lose = -pos.capital_at_risk().dollars();
         mean += p_win * win + (1.0 - p_win) * lose;
         // Bernoulli sd scaled by the payoff range.
         sds.push((win - lose).abs() * (p_win * (1.0 - p_win)).sqrt());
@@ -254,8 +251,8 @@ pub fn parametric_var(
         var: var.max(0.0),
         cvar: cvar.max(0.0),
         expected_pnl: mean,
-        worst: -portfolio.capital_at_risk(),
-        best: positions.iter().map(|(p, _)| p.max_gain()).sum(),
+        worst: -portfolio.capital_at_risk().dollars(),
+        best: positions.iter().map(|(p, _)| p.max_gain().dollars()).sum(),
         prob_loss: f64::NAN,
         paths: 0,
     }
@@ -264,16 +261,16 @@ pub fn parametric_var(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use edge_core::types::{EventId, MarketId, Qty, Side};
+    use edge_core::types::{EventId, MarketId, Notional, Qty, Side};
 
     fn portfolio_with(n: usize, same_event: bool) -> (Portfolio, HashMap<MarketId, Price>) {
-        let mut pf = Portfolio::new(10_000.0);
+        let mut pf = Portfolio::new(Notional::from_dollars(10_000.0));
         let mut marks = HashMap::new();
         for i in 0..n {
             let m = MarketId(i as u64);
             let e = if same_event { EventId(0) } else { EventId(i as u64) };
             pf.set_event(m, e);
-            pf.apply_fill(m, Side::Buy, Price::from_cents(50), Qty(100), 0.0);
+            pf.apply_fill(m, Side::Buy, Price::from_cents(50), Qty(100), Notional::ZERO);
             marks.insert(m, Price::from_cents(50));
         }
         (pf, marks)
@@ -281,7 +278,7 @@ mod tests {
 
     #[test]
     fn an_empty_portfolio_has_no_risk() {
-        let pf = Portfolio::new(1_000.0);
+        let pf = Portfolio::new(Notional::from_dollars(1_000.0));
         let r = monte_carlo_var(&pf, &HashMap::new(), &VarConfig::default());
         assert_eq!(r.var, 0.0);
         assert_eq!(r.cvar, 0.0);
@@ -294,13 +291,13 @@ mod tests {
         let (pf, marks) = portfolio_with(10, false);
         let r = monte_carlo_var(&pf, &marks, &VarConfig::default());
         assert!(
-            r.var <= pf.capital_at_risk() + 1e-6,
+            r.var <= pf.capital_at_risk().dollars() + 1e-6,
             "VaR {} exceeded the {} that was actually paid",
             r.var,
             pf.capital_at_risk()
         );
-        assert!(r.cvar <= pf.capital_at_risk() + 1e-6);
-        assert!(r.worst >= -pf.capital_at_risk() - 1e-6);
+        assert!(r.cvar <= pf.capital_at_risk().dollars() + 1e-6);
+        assert!(r.worst >= -pf.capital_at_risk().dollars() - 1e-6);
     }
 
     #[test]
@@ -325,7 +322,7 @@ mod tests {
         let (pf, marks) = portfolio_with(10, true);
         let r = monte_carlo_var(&pf, &marks, &VarConfig::default());
         assert!(
-            (r.var - pf.capital_at_risk()).abs() < 1.0,
+            (r.var - pf.capital_at_risk().dollars()).abs() < 1.0,
             "linked markets must risk everything together: VaR {} vs {}",
             r.var,
             pf.capital_at_risk()
@@ -376,7 +373,7 @@ mod tests {
         // normal approximation does not know the bound exists and will happily
         // report a 99% VaR larger than the total capital committed.
         let (pf, marks) = portfolio_with(20, true);
-        let bound = pf.capital_at_risk();
+        let bound = pf.capital_at_risk().dollars();
         let mc = monte_carlo_var(&pf, &marks, &VarConfig::default());
         let par = parametric_var(&pf, &marks, 0.99, 0.30);
 
@@ -419,12 +416,12 @@ mod tests {
         // YES for 48c on one venue and NO for 48c on another: 96c committed for
         // a payout of exactly $1 whichever way the event resolves. Every
         // simulated path must profit, and VaR must be zero — not small, zero.
-        let mut pf = Portfolio::new(1_000.0);
+        let mut pf = Portfolio::new(Notional::from_dollars(1_000.0));
         pf.set_event(MarketId(0), EventId(0));
         pf.set_event(MarketId(1), EventId(0));
-        pf.apply_fill(MarketId(0), Side::Buy, Price::from_cents(48), Qty(100), 0.0);
+        pf.apply_fill(MarketId(0), Side::Buy, Price::from_cents(48), Qty(100), Notional::ZERO);
         // Selling YES at 52c is buying the NO leg at 48c.
-        pf.apply_fill(MarketId(1), Side::Sell, Price::from_cents(52), Qty(100), 0.0);
+        pf.apply_fill(MarketId(1), Side::Sell, Price::from_cents(52), Qty(100), Notional::ZERO);
         let marks = HashMap::from([
             (MarketId(0), Price::from_cents(48)),
             (MarketId(1), Price::from_cents(48)),
@@ -445,11 +442,11 @@ mod tests {
         // surfaces as a band of paths where both legs lose. That is not a
         // modelling artefact to smooth away — it is the risk of trusting two
         // marks that cannot both be right.
-        let mut pf = Portfolio::new(1_000.0);
+        let mut pf = Portfolio::new(Notional::from_dollars(1_000.0));
         pf.set_event(MarketId(0), EventId(0));
         pf.set_event(MarketId(1), EventId(0));
-        pf.apply_fill(MarketId(0), Side::Buy, Price::from_cents(48), Qty(100), 0.0);
-        pf.apply_fill(MarketId(1), Side::Sell, Price::from_cents(52), Qty(100), 0.0);
+        pf.apply_fill(MarketId(0), Side::Buy, Price::from_cents(48), Qty(100), Notional::ZERO);
+        pf.apply_fill(MarketId(1), Side::Sell, Price::from_cents(52), Qty(100), Notional::ZERO);
         let marks = HashMap::from([
             (MarketId(0), Price::from_cents(48)),
             (MarketId(1), Price::from_cents(52)),

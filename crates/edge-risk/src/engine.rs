@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 
-use edge_core::types::{MarketId, Price, Qty, Side, Ts};
+use edge_core::types::{MarketId, Notional, Price, Qty, Side, Ts};
 
 use crate::limits::{KillReason, RiskBreach, RiskDecision, RiskLimits};
 use crate::position::Portfolio;
@@ -43,7 +43,7 @@ pub struct RiskEngine {
     marks: HashMap<MarketId, (Price, Ts)>,
     kill: Option<KillReason>,
     /// Equity at the start of the session. The anchor for the daily loss limit.
-    session_anchor: f64,
+    session_anchor: Notional,
     tokens: f64,
     last_refill: Ts,
     consecutive_rejects: u32,
@@ -51,7 +51,7 @@ pub struct RiskEngine {
 }
 
 impl RiskEngine {
-    pub fn new(limits: RiskLimits, starting_cash: f64) -> Self {
+    pub fn new(limits: RiskLimits, starting_cash: Notional) -> Self {
         RiskEngine {
             portfolio: Portfolio::new(starting_cash),
             tokens: limits.order_burst,
@@ -122,7 +122,7 @@ impl RiskEngine {
         self.session_anchor = self.portfolio.equity(&self.marks());
     }
 
-    pub fn session_pnl(&self) -> f64 {
+    pub fn session_pnl(&self) -> Notional {
         self.portfolio.equity(&self.marks()) - self.session_anchor
     }
 
@@ -173,7 +173,7 @@ impl RiskEngine {
         side: Side,
         price: Price,
         qty: Qty,
-        fee: f64,
+        fee: Notional,
         now: Ts,
     ) {
         self.portfolio.apply_fill(market, side, price, qty, fee);
@@ -181,7 +181,7 @@ impl RiskEngine {
         self.on_venue_accept();
     }
 
-    pub fn on_settle(&mut self, market: MarketId, outcome: bool) -> f64 {
+    pub fn on_settle(&mut self, market: MarketId, outcome: bool) -> Notional {
         self.marks.remove(&market);
         self.portfolio.settle(market, outcome)
     }
@@ -208,7 +208,7 @@ impl RiskEngine {
         side: Side,
         price: Price,
         qty: Qty,
-        fee_per_contract: f64,
+        fee_per_contract: Notional,
         now: Ts,
     ) -> RiskDecision {
         self.stats.checks += 1;
@@ -230,7 +230,7 @@ impl RiskEngine {
         side: Side,
         price: Price,
         qty: Qty,
-        fee_per_contract: f64,
+        fee_per_contract: Notional,
         now: Ts,
     ) -> RiskDecision {
         let want = qty.get().abs();
@@ -284,11 +284,12 @@ impl RiskEngine {
             return RiskDecision::Approve(Qty(want));
         }
 
-        // Cost of one contract of the leg this order would acquire.
-        let leg_price =
-            if side == Side::Buy { price.dollars() } else { price.complement().dollars() };
-        let unit_cost = leg_price + fee_per_contract;
-        if unit_cost <= 0.0 {
+        // Cost of one contract of the leg this order would acquire, in
+        // micro-dollars. Every budget below is divided by this, and integer
+        // division floors — which is the conservative direction for a limit.
+        let leg_price = if side == Side::Buy { price } else { price.complement() };
+        let unit_cost = Notional(leg_price.micros()) + fee_per_contract;
+        if unit_cost.0 <= 0 {
             return RiskDecision::Reject(RiskBreach::InvalidPrice);
         }
 
@@ -302,18 +303,18 @@ impl RiskEngine {
             }
         };
 
+        // How many contracts a budget buys, floored. `budget` may be
+        // negative when a limit is already breached, in which case nothing
+        // opens.
+        let affordable = |budget: Notional| budget.0.max(0) / unit_cost.0;
+
         // Cash, keeping the reserve intact.
-        let spendable = (self.portfolio.cash - self.limits.min_cash_reserve).max(0.0);
-        bind(
-            (spendable / unit_cost).floor() as i64,
-            RiskBreach::InsufficientCash,
-            &mut allowed,
-            &mut binding,
-        );
+        let spendable = self.portfolio.cash - self.limits.min_cash_reserve;
+        bind(affordable(spendable), RiskBreach::InsufficientCash, &mut allowed, &mut binding);
 
         // Per-order notional.
         bind(
-            (self.limits.max_order_cost / unit_cost).floor() as i64,
+            affordable(self.limits.max_order_cost),
             RiskBreach::OrderSize,
             &mut allowed,
             &mut binding,
@@ -328,12 +329,21 @@ impl RiskEngine {
             &mut binding,
         );
 
-        // Capital at risk in this market.
-        let pos_cost = self.portfolio.position(market).map(|p| p.capital_at_risk()).unwrap_or(0.0);
-        let freed =
-            self.portfolio.position(market).map(|p| closes as f64 * p.avg_cost).unwrap_or(0.0);
+        // Capital at risk in this market, and the portion of it this order
+        // would release by closing. Freed capital is the closing contracts'
+        // share of the existing basis, which is exact only because the basis
+        // is a total rather than a rounded average price.
+        let pos = self.portfolio.position(market);
+        let pos_cost = pos.map(|p| p.capital_at_risk()).unwrap_or(Notional::ZERO);
+        let freed = match pos {
+            Some(p) if closes > 0 => {
+                let held = p.qty.get().abs().max(1);
+                Notional((pos_cost.0 as i128 * closes as i128 / held as i128) as i64)
+            }
+            _ => Notional::ZERO,
+        };
         bind(
-            ((self.limits.max_position_cost - (pos_cost - freed)) / unit_cost).floor() as i64,
+            affordable(self.limits.max_position_cost - (pos_cost - freed)),
             RiskBreach::PositionCost,
             &mut allowed,
             &mut binding,
@@ -343,7 +353,7 @@ impl RiskEngine {
         if let Some(event) = self.portfolio.event_of(market) {
             let at_risk = self.portfolio.event_at_risk(event) - freed;
             bind(
-                ((self.limits.max_event_cost - at_risk) / unit_cost).floor() as i64,
+                affordable(self.limits.max_event_cost - at_risk),
                 RiskBreach::EventConcentration,
                 &mut allowed,
                 &mut binding,
@@ -353,7 +363,7 @@ impl RiskEngine {
         // Capital at risk across the portfolio.
         let total_at_risk = self.portfolio.capital_at_risk() - freed;
         bind(
-            ((self.limits.max_portfolio_cost - total_at_risk) / unit_cost).floor() as i64,
+            affordable(self.limits.max_portfolio_cost - total_at_risk),
             RiskBreach::PortfolioCost,
             &mut allowed,
             &mut binding,
@@ -390,15 +400,24 @@ mod tests {
     const M: MarketId = MarketId(1);
     const N: MarketId = MarketId(2);
 
+    /// Dollars as money, for readable limits and bankrolls.
+    fn usd(x: f64) -> Notional {
+        Notional::from_dollars(x)
+    }
+
+    /// No fee. Spelled out because `0.0` no longer type-checks, which is the
+    /// point: a fee is money and money is an integer.
+    const FREE: Notional = Notional::ZERO;
+
     fn engine() -> RiskEngine {
         let limits = RiskLimits {
             max_position_contracts: 500,
-            max_position_cost: 100.0,
-            max_event_cost: 150.0,
-            max_portfolio_cost: 400.0,
-            max_order_cost: 100.0,
-            min_cash_reserve: 50.0,
-            max_daily_loss: 200.0,
+            max_position_cost: usd(100.0),
+            max_event_cost: usd(150.0),
+            max_portfolio_cost: usd(400.0),
+            max_order_cost: usd(100.0),
+            min_cash_reserve: usd(50.0),
+            max_daily_loss: usd(200.0),
             max_drawdown: 0.25,
             max_orders_per_second: 10.0,
             order_burst: 20.0,
@@ -407,7 +426,7 @@ mod tests {
             max_consecutive_rejects: 3,
         };
         limits.validate().unwrap();
-        let mut e = RiskEngine::new(limits, 1_000.0);
+        let mut e = RiskEngine::new(limits, usd(1_000.0));
         e.set_mark(M, Price::from_cents(50), Ts::from_secs(1));
         e.set_mark(N, Price::from_cents(50), Ts::from_secs(1));
         e
@@ -421,7 +440,7 @@ mod tests {
     fn an_order_inside_every_limit_is_approved_whole() {
         let mut e = engine();
         // 50 contracts at 50c = $25, inside all caps.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(50), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(50), FREE, now());
         assert_eq!(d, RiskDecision::Approve(Qty(50)));
     }
 
@@ -429,7 +448,7 @@ mod tests {
     fn an_oversized_order_is_cut_down_not_refused() {
         let mut e = engine();
         // 1,000 at 50c would be $500; the per-order cap is $100, so 200 fit.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(200), RiskBreach::OrderSize));
         assert!(d.is_allowed());
     }
@@ -438,16 +457,16 @@ mod tests {
     fn fees_count_against_the_limits() {
         let mut e = engine();
         // At 50c plus a 1.75c fee, $100 buys 193 contracts rather than 200.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), 0.0175, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), usd(0.0175), now());
         assert_eq!(d.qty(), Qty(193));
     }
 
     #[test]
     fn the_per_market_cost_limit_binds() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(150), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(150), FREE, now());
         // $75 already at risk against a $100 cap: 50 more contracts fit.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(50), RiskBreach::PositionCost));
     }
 
@@ -457,9 +476,9 @@ mod tests {
         e.portfolio_mut().set_event(M, EventId(1));
         e.portfolio_mut().set_event(N, EventId(1));
         // $100 at risk on market M, all of it on event 1.
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
         // The per-market cap on N is untouched, but the event cap leaves $50.
-        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
+        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(100), RiskBreach::EventConcentration));
     }
 
@@ -467,12 +486,12 @@ mod tests {
     fn the_portfolio_limit_binds_across_events() {
         let e = engine();
         let mut limits = *e.limits();
-        limits.max_portfolio_cost = 120.0;
-        let mut e = RiskEngine::new(limits, 1_000.0);
+        limits.max_portfolio_cost = usd(120.0);
+        let mut e = RiskEngine::new(limits, usd(1_000.0));
         e.set_mark(M, Price::from_cents(50), Ts::from_secs(1));
         e.set_mark(N, Price::from_cents(50), Ts::from_secs(1));
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
-        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
+        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(40), RiskBreach::PortfolioCost));
     }
 
@@ -481,17 +500,17 @@ mod tests {
         // Every other limit is raised out of the way so the reserve is the only
         // thing that can bind.
         let limits = RiskLimits {
-            min_cash_reserve: 900.0,
-            max_order_cost: 10_000.0,
-            max_position_cost: 10_000.0,
-            max_event_cost: 10_000.0,
-            max_portfolio_cost: 10_000.0,
+            min_cash_reserve: usd(900.0),
+            max_order_cost: usd(10_000.0),
+            max_position_cost: usd(10_000.0),
+            max_event_cost: usd(10_000.0),
+            max_portfolio_cost: usd(10_000.0),
             ..Default::default()
         };
-        let mut e = RiskEngine::new(limits, 1_000.0);
+        let mut e = RiskEngine::new(limits, usd(1_000.0));
         e.set_mark(M, Price::from_cents(50), Ts::from_secs(1));
         // Only $100 is spendable, so 200 contracts at 50c.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1_000), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(200), RiskBreach::InsufficientCash));
     }
 
@@ -499,16 +518,16 @@ mod tests {
     fn a_short_is_costed_on_the_no_leg() {
         let mut e = engine();
         // Selling YES at 20c buys NO at 80c, so the $100 order cap allows 125.
-        let d = e.check(M, Side::Sell, Price::from_cents(20), Qty(1_000), 0.0, now());
+        let d = e.check(M, Side::Sell, Price::from_cents(20), Qty(1_000), FREE, now());
         assert_eq!(d.qty(), Qty(125));
     }
 
     #[test]
     fn closing_is_allowed_even_when_a_limit_is_breached() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(200), FREE, now());
         // Fully at the per-market cap. Getting out must still work.
-        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(200), 0.0, now());
+        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(200), FREE, now());
         assert_eq!(d, RiskDecision::Approve(Qty(200)));
     }
 
@@ -517,13 +536,13 @@ mod tests {
         // The failure this guards against: an automated system trapped in the
         // position its own risk gate was supposed to prevent.
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(100), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(100), FREE, now());
         e.trip(KillReason::Manual);
-        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(100), 0.0, now());
+        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(100), FREE, now());
         assert_eq!(d, RiskDecision::Approve(Qty(100)));
 
         // Opening is refused.
-        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        let d = e.check(N, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         assert_eq!(d, RiskDecision::Reject(RiskBreach::KillSwitchActive));
     }
 
@@ -531,9 +550,9 @@ mod tests {
     fn a_flip_closes_freely_and_opens_under_the_limits() {
         let mut e = engine();
         e.trip(KillReason::Manual);
-        e.portfolio_mut().apply_fill(M, Side::Buy, Price::from_cents(50), Qty(100), 0.0);
+        e.portfolio_mut().apply_fill(M, Side::Buy, Price::from_cents(50), Qty(100), FREE);
         // Sell 150: 100 closes, 50 would open a short — refused while halted.
-        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(150), 0.0, now());
+        let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(150), FREE, now());
         assert_eq!(d, RiskDecision::Resize(Qty(100), RiskBreach::KillSwitchActive));
     }
 
@@ -541,11 +560,11 @@ mod tests {
     fn an_unmarked_market_cannot_be_opened_but_can_be_closed() {
         let mut e = engine();
         let unknown = MarketId(99);
-        let d = e.check(unknown, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        let d = e.check(unknown, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         assert_eq!(d, RiskDecision::Reject(RiskBreach::NoMark));
 
-        e.portfolio_mut().apply_fill(unknown, Side::Buy, Price::from_cents(50), Qty(10), 0.0);
-        let d = e.check(unknown, Side::Sell, Price::from_cents(50), Qty(10), 0.0, now());
+        e.portfolio_mut().apply_fill(unknown, Side::Buy, Price::from_cents(50), Qty(10), FREE);
+        let d = e.check(unknown, Side::Sell, Price::from_cents(50), Qty(10), FREE, now());
         assert_eq!(d, RiskDecision::Approve(Qty(10)));
     }
 
@@ -554,7 +573,7 @@ mod tests {
         let mut e = engine();
         e.set_mark(M, Price::from_cents(50), Ts::from_secs(1));
         // Thirty-one seconds later, past the limit.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(10), 0.0, Ts::from_secs(32));
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(10), FREE, Ts::from_secs(32));
         assert_eq!(d, RiskDecision::Reject(RiskBreach::NoMark));
     }
 
@@ -563,25 +582,25 @@ mod tests {
         let mut e = engine();
         // Burst is 20.
         for i in 0..20 {
-            let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), 0.0, now());
+            let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), FREE, now());
             assert!(d.is_allowed(), "order {i} should be inside the burst");
         }
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), FREE, now());
         assert_eq!(d, RiskDecision::Reject(RiskBreach::RateLimit));
 
         // A second later, ten more tokens.
         let later = Ts::from_secs(3);
-        assert!(e.check(M, Side::Buy, Price::from_cents(50), Qty(1), 0.0, later).is_allowed());
+        assert!(e.check(M, Side::Buy, Price::from_cents(50), Qty(1), FREE, later).is_allowed());
     }
 
     #[test]
     fn rejected_orders_do_not_consume_rate_tokens() {
         let mut e = engine();
         for _ in 0..50 {
-            e.check(MarketId(77), Side::Buy, Price::from_cents(50), Qty(1), 0.0, now());
+            e.check(MarketId(77), Side::Buy, Price::from_cents(50), Qty(1), FREE, now());
         }
         // All rejected for NoMark; the burst should be untouched.
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(1), FREE, now());
         assert!(d.is_allowed());
     }
 
@@ -591,39 +610,39 @@ mod tests {
         for i in 0..3 {
             let m = MarketId(100 + i);
             e.set_mark(m, Price::from_cents(50), Ts::from_secs(1));
-            e.on_fill(m, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+            e.on_fill(m, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         }
         let m = MarketId(200);
         e.set_mark(m, Price::from_cents(50), Ts::from_secs(1));
-        let d = e.check(m, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        let d = e.check(m, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         assert_eq!(d, RiskDecision::Reject(RiskBreach::TooManyMarkets));
 
         // Adding to a market already held is still fine.
-        let d = e.check(MarketId(100), Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        let d = e.check(MarketId(100), Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         assert!(d.is_allowed());
     }
 
     #[test]
     fn the_daily_loss_limit_halts_trading() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(90), Qty(300), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(90), Qty(300), FREE, now());
         // The position collapses.
         e.set_mark(M, Price::from_cents(10), now());
         e.update(now());
         assert_eq!(e.kill_reason(), Some(KillReason::DailyLoss));
-        assert!(e.session_pnl() < -200.0);
+        assert!(e.session_pnl() < usd(-200.0));
     }
 
     #[test]
     fn the_drawdown_limit_halts_trading() {
         let limits = RiskLimits {
-            max_daily_loss: 1e9, // out of the way, so only drawdown can trip
+            max_daily_loss: usd(1e9), // out of the way, so only drawdown can trip
             max_drawdown: 0.10,
             ..Default::default()
         };
-        let mut e = RiskEngine::new(limits, 1_000.0);
+        let mut e = RiskEngine::new(limits, usd(1_000.0));
         e.set_mark(M, Price::from_cents(50), Ts::from_secs(1));
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(1_000), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(1_000), FREE, now());
 
         e.set_mark(M, Price::from_cents(70), now());
         e.update(now()); // peak equity 1,200
@@ -637,7 +656,7 @@ mod tests {
     #[test]
     fn a_frozen_feed_halts_trading() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(10), 0.0, Ts::from_secs(2));
+        e.on_fill(M, Side::Buy, Price::from_cents(50), Qty(10), FREE, Ts::from_secs(2));
         e.update(Ts::from_secs(3));
         assert!(!e.is_halted());
         e.update(Ts::from_secs(120));
@@ -666,7 +685,7 @@ mod tests {
         assert!(e.is_halted(), "nothing clears the switch on its own");
         e.reset_kill_switch();
         assert!(!e.is_halted());
-        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        let d = e.check(M, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         assert!(d.is_allowed());
     }
 
@@ -682,11 +701,11 @@ mod tests {
     #[test]
     fn rolling_the_session_re_anchors_the_daily_limit() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(90), Qty(300), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(90), Qty(300), FREE, now());
         e.set_mark(M, Price::from_cents(10), now());
-        assert!(e.session_pnl() < -200.0);
+        assert!(e.session_pnl() < usd(-200.0));
         e.roll_session();
-        assert!(e.session_pnl().abs() < 1e-9);
+        assert_eq!(e.session_pnl(), Notional::ZERO);
         e.update(now());
         assert!(!e.is_halted());
     }
@@ -694,19 +713,19 @@ mod tests {
     #[test]
     fn settlement_releases_capital_and_the_mark() {
         let mut e = engine();
-        e.on_fill(M, Side::Buy, Price::from_cents(40), Qty(100), 0.0, now());
+        e.on_fill(M, Side::Buy, Price::from_cents(40), Qty(100), FREE, now());
         let pnl = e.on_settle(M, true);
-        assert!((pnl - 60.0).abs() < 1e-9);
+        assert_eq!(pnl, usd(60.0));
         assert!(e.mark(M).is_none());
-        assert!(e.portfolio().capital_at_risk() < 1e-9);
+        assert_eq!(e.portfolio().capital_at_risk(), Notional::ZERO);
     }
 
     #[test]
     fn statistics_count_each_outcome_once() {
         let mut e = engine();
-        e.check(M, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
-        e.check(M, Side::Buy, Price::from_cents(50), Qty(10_000), 0.0, now());
-        e.check(MarketId(77), Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
+        e.check(M, Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
+        e.check(M, Side::Buy, Price::from_cents(50), Qty(10_000), FREE, now());
+        e.check(MarketId(77), Side::Buy, Price::from_cents(50), Qty(10), FREE, now());
         let s = e.stats();
         assert_eq!((s.checks, s.approved, s.resized, s.rejected), (3, 1, 1, 1));
     }
@@ -715,15 +734,15 @@ mod tests {
     fn zero_and_untradable_orders_are_refused() {
         let mut e = engine();
         assert_eq!(
-            e.check(M, Side::Buy, Price::from_cents(50), Qty(0), 0.0, now()),
+            e.check(M, Side::Buy, Price::from_cents(50), Qty(0), FREE, now()),
             RiskDecision::Reject(RiskBreach::OrderSize)
         );
         assert_eq!(
-            e.check(M, Side::Buy, Price::ONE, Qty(10), 0.0, now()),
+            e.check(M, Side::Buy, Price::ONE, Qty(10), FREE, now()),
             RiskDecision::Reject(RiskBreach::InvalidPrice)
         );
         assert_eq!(
-            e.check(M, Side::Buy, Price::ZERO, Qty(10), 0.0, now()),
+            e.check(M, Side::Buy, Price::ZERO, Qty(10), FREE, now()),
             RiskDecision::Reject(RiskBreach::InvalidPrice)
         );
     }
@@ -737,16 +756,16 @@ mod tests {
             let t = Ts::from_secs(10 + i);
             let m = MarketId(1 + (i % 3) as u64);
             e.set_mark(m, Price::from_cents(50), t);
-            let d = e.check(m, Side::Buy, Price::from_cents(50), Qty(50), 0.0, t);
+            let d = e.check(m, Side::Buy, Price::from_cents(50), Qty(50), FREE, t);
             if d.is_allowed() {
-                e.on_fill(m, Side::Buy, Price::from_cents(50), d.qty(), 0.0, t);
+                e.on_fill(m, Side::Buy, Price::from_cents(50), d.qty(), FREE, t);
             }
             assert!(
-                e.portfolio().capital_at_risk() <= e.limits().max_portfolio_cost + 1e-6,
+                e.portfolio().capital_at_risk() <= e.limits().max_portfolio_cost,
                 "portfolio cap breached at step {i}: {}",
                 e.portfolio().capital_at_risk()
             );
-            assert!(e.portfolio().cash >= e.limits().min_cash_reserve - 1e-6);
+            assert!(e.portfolio().cash >= e.limits().min_cash_reserve);
         }
     }
 }
