@@ -5,6 +5,14 @@ import math
 # transform would blow up to +/- infinity.
 _PROB_EPS = 1e-12
 
+# Upper bound on the power-method exponent. A market needing more than this is
+# too degenerate to devig meaningfully.
+_MAX_POWER_EXPONENT = 1e6
+
+# How far the devigged probabilities may sum from 1.0 before the solve is
+# treated as failed rather than merely imprecise.
+_DEVIG_RESIDUAL_TOLERANCE = 1e-6
+
 def american_to_decimal(odds: float) -> float:
     """
     Converts American odds to decimal odds.
@@ -35,45 +43,97 @@ def strip_vig_power_method(probabilities: List[float], max_iterations: int = 100
     """
     Removes the bookmaker's overround (vig) using the Power Method.
     Solves for 'k' in: sum(p_i^k) = 1.0
-    
+
     Reference: Shin/Power method for devigging multi-way markets.
+
+    The solve is a *safeguarded* Newton: f(k) = sum(p_i^k) - 1 is strictly
+    decreasing in k for probabilities in (0, 1), so the root can be bracketed
+    and every Newton step that would leave the bracket - or fail to shrink it -
+    is replaced by a bisection step. A bare Newton iteration can step to a wildly
+    wrong exponent and, because the old implementation returned p**k whatever
+    happened, that exponent became a "fair" price the service then traded
+    against. This raises instead: no answer beats a confidently wrong one.
     """
+    if not probabilities:
+        raise ValueError("Cannot devig an empty market.")
+    if any(not math.isfinite(p) or p <= 0.0 for p in probabilities):
+        raise ValueError("Implied probabilities must be finite and strictly positive.")
+    if any(p >= 1.0 for p in probabilities):
+        # A single outcome already claiming certainty leaves no root to find.
+        raise ValueError("Implied probabilities must be below 1.0 to devig.")
+
     overround = sum(probabilities)
-    if overround < 1.0:
-        # If probabilities are less than 1.0, they are already "fair" or undervalued
-        return [p / overround for p in probabilities]
-    
+    if overround <= 0.0:
+        raise ValueError("Implied probabilities must sum to a positive number.")
+
     if math.isclose(overround, 1.0, rel_tol=1e-12):
-        return probabilities
+        return list(probabilities)
 
-    # Initial guess for k
-    n = len(probabilities)
-    # k = 1.0 is the identity. If overround > 1.0, k will be > 1.0
-    k = 1.0 
-    
-    # Newton-Raphson to solve f(k) = sum(p_i^k) - 1 = 0
+    if overround < 1.0:
+        # Underround: the book is quoting a sum below 1, so there is no margin to
+        # strip. Scale proportionally rather than solving for an exponent < 1.
+        return [p / overround for p in probabilities]
+
+    def f(k: float) -> float:
+        return sum(p ** k for p in probabilities) - 1.0
+
+    # Bracket the root. f is strictly decreasing, and f(1) = overround - 1 > 0
+    # here, so the root lies at some k > 1. Walk the upper bound out until f
+    # turns negative.
+    lo, hi = 1.0, 2.0
+    f_lo = overround - 1.0
+    f_hi = f(hi)
+    while f_hi > 0.0:
+        lo, f_lo = hi, f_hi
+        hi *= 2.0
+        if hi > _MAX_POWER_EXPONENT:
+            raise ValueError(
+                f"Could not bracket a devig exponent for overround {overround:.6f}; "
+                "the market is too degenerate to devig."
+            )
+        f_hi = f(hi)
+
+    k = lo
     for _ in range(max_iterations):
-        # Clip k to prevent OverflowError in p**k
-        # p is always <= 1.0 (implied prob), so p**k won't overflow for k > 0
-        # However, if p is extremely small and k is small, it's fine.
-        # If p is extremely small and k is large, p**k -> 0.
-        k = max(1e-5, min(k, 1000.0))
-        
-        f_k = sum(p**k for p in probabilities) - 1.0
-        f_prime_k = sum(p**k * math.log(p) for p in probabilities if p > 0)
-        
-        if abs(f_prime_k) < 1e-12:
+        f_k = f(k)
+        if abs(f_k) < tolerance:
             break
-            
-        step = f_k / f_prime_k
-        new_k = k - step
-        
-        if abs(new_k - k) < tolerance:
-            k = new_k
-            break
-        k = new_k
 
-    return [p**k for p in probabilities]
+        # Keep the bracket tight around the root at every step.
+        if f_k > 0.0:
+            lo = k
+        else:
+            hi = k
+
+        derivative = sum(p ** k * math.log(p) for p in probabilities)
+        if derivative != 0.0 and math.isfinite(derivative):
+            candidate = k - f_k / derivative
+        else:
+            candidate = math.inf  # force the bisection fallback below
+
+        # Reject a Newton step that leaves the bracket or stalls; bisect instead.
+        if not (math.isfinite(candidate) and lo < candidate < hi):
+            candidate = 0.5 * (lo + hi)
+
+        if abs(candidate - k) < tolerance:
+            k = candidate
+            break
+        k = candidate
+    else:
+        raise ValueError(
+            f"Devig solver failed to converge in {max_iterations} iterations "
+            f"(overround {overround:.6f}); refusing to return an unconverged fair price."
+        )
+
+    fair = [p ** k for p in probabilities]
+    total = sum(fair)
+    if not math.isfinite(total) or abs(total - 1.0) > _DEVIG_RESIDUAL_TOLERANCE:
+        raise ValueError(
+            f"Devig solution does not sum to 1 (got {total!r}); refusing to return it."
+        )
+    # Converged to within tolerance; divide out the last few ULPs so callers can
+    # rely on the result being a genuine probability distribution.
+    return [p / total for p in fair]
 
 def pool_log_odds(fair_prob_vectors: List[List[float]]) -> List[float]:
     """

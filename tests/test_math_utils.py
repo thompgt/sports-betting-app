@@ -42,6 +42,44 @@ def test_strip_vig_power_method_two_way():
     assert math.isclose(fair_probs[1], 0.5)
     assert math.isclose(sum(fair_probs), 1.0)
 
+def test_strip_vig_solver_is_bracketed_and_always_lands_on_the_simplex():
+    # Sweep a wide range of overrounds and market shapes; every solve must
+    # converge to a genuine probability distribution, never a silent near-miss.
+    import random
+    rng = random.Random(20260810)
+    for _ in range(300):
+        n = rng.choice([2, 2, 3, 4, 8])
+        raw = [rng.uniform(0.01, 0.9) for _ in range(n)]
+        overround = rng.uniform(1.001, 1.60)
+        probs = [p * overround / sum(raw) for p in raw]
+        if any(p >= 1.0 for p in probs):
+            continue
+        fair = strip_vig_power_method(probs)
+        assert math.isclose(sum(fair), 1.0, abs_tol=1e-12)
+        assert all(0.0 < p < 1.0 for p in fair)
+        # Devigging preserves the favourite ordering.
+        assert [i for i, _ in sorted(enumerate(probs), key=lambda t: t[1])] == \
+               [i for i, _ in sorted(enumerate(fair), key=lambda t: t[1])]
+
+def test_strip_vig_rejects_degenerate_input_instead_of_guessing():
+    with pytest.raises(ValueError):
+        strip_vig_power_method([])
+    with pytest.raises(ValueError):
+        strip_vig_power_method([0.5, 0.0])          # zero probability
+    with pytest.raises(ValueError):
+        strip_vig_power_method([0.5, -0.1])         # negative probability
+    with pytest.raises(ValueError):
+        strip_vig_power_method([1.0, 0.5])          # an outcome already certain
+    with pytest.raises(ValueError):
+        strip_vig_power_method([float('nan'), 0.5])
+
+def test_strip_vig_raises_rather_than_returning_an_unconverged_price():
+    # One iteration is nowhere near enough for a fat overround. The old
+    # implementation returned p**k from wherever the loop happened to stop;
+    # an unconverged exponent must be an error, not a fair price.
+    with pytest.raises(ValueError):
+        strip_vig_power_method([0.6, 0.5, 0.4], max_iterations=1, tolerance=1e-15)
+
 def test_strip_vig_power_method_multi_way():
     # Example 3-way market (Soccer Home/Draw/Away)
     # Odds: 2.0, 3.5, 4.0
