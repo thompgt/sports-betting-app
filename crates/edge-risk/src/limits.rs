@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use edge_core::types::Qty;
+use edge_core::types::{Notional, Qty};
 use serde::{Deserialize, Serialize};
 
 /// Why an order was refused or cut down.
@@ -125,21 +125,21 @@ impl fmt::Display for KillReason {
 pub struct RiskLimits {
     /// Maximum absolute contracts in any one market.
     pub max_position_contracts: i64,
-    /// Maximum capital at risk in any one market, in dollars.
-    pub max_position_cost: f64,
+    /// Maximum capital at risk in any one market.
+    pub max_position_cost: Notional,
     /// Maximum capital at risk across every market resolving on one event.
     /// The limit that actually binds — ten markets on ten legs of one game are
     /// one bet, and a per-market limit does not constrain it at all.
-    pub max_event_cost: f64,
+    pub max_event_cost: Notional,
     /// Maximum total capital at risk.
-    pub max_portfolio_cost: f64,
+    pub max_portfolio_cost: Notional,
     /// Maximum cost of any single order.
-    pub max_order_cost: f64,
+    pub max_order_cost: Notional,
     /// Cash never to be committed, so there is always something left to close
     /// positions and pay fees with.
-    pub min_cash_reserve: f64,
+    pub min_cash_reserve: Notional,
     /// Loss since the session anchor that trips the kill switch.
-    pub max_daily_loss: f64,
+    pub max_daily_loss: Notional,
     /// Fractional decline from peak equity that trips the kill switch.
     pub max_drawdown: f64,
     /// Sustained order submission rate.
@@ -158,12 +158,12 @@ impl Default for RiskLimits {
     fn default() -> Self {
         RiskLimits {
             max_position_contracts: 1_000,
-            max_position_cost: 250.0,
-            max_event_cost: 500.0,
-            max_portfolio_cost: 2_500.0,
-            max_order_cost: 250.0,
-            min_cash_reserve: 100.0,
-            max_daily_loss: 500.0,
+            max_position_cost: Notional::from_dollars(250.0),
+            max_event_cost: Notional::from_dollars(500.0),
+            max_portfolio_cost: Notional::from_dollars(2_500.0),
+            max_order_cost: Notional::from_dollars(250.0),
+            min_cash_reserve: Notional::from_dollars(100.0),
+            max_daily_loss: Notional::from_dollars(500.0),
             max_drawdown: 0.20,
             max_orders_per_second: 10.0,
             order_burst: 50.0,
@@ -177,15 +177,16 @@ impl Default for RiskLimits {
 impl RiskLimits {
     /// Limits scaled to a bankroll, for an operator who would rather state one
     /// number than twelve.
-    pub fn for_bankroll(bankroll: f64) -> Self {
+    pub fn for_bankroll(bankroll: Notional) -> Self {
+        let frac = |f: f64| Notional((bankroll.0 as f64 * f).round() as i64);
         RiskLimits {
-            max_position_contracts: (bankroll * 0.05 / 0.5).round() as i64,
-            max_position_cost: bankroll * 0.02,
-            max_event_cost: bankroll * 0.05,
-            max_portfolio_cost: bankroll * 0.50,
-            max_order_cost: bankroll * 0.02,
-            min_cash_reserve: bankroll * 0.05,
-            max_daily_loss: bankroll * 0.05,
+            max_position_contracts: (bankroll.dollars() * 0.05 / 0.5).round() as i64,
+            max_position_cost: frac(0.02),
+            max_event_cost: frac(0.05),
+            max_portfolio_cost: frac(0.50),
+            max_order_cost: frac(0.02),
+            min_cash_reserve: frac(0.05),
+            max_daily_loss: frac(0.05),
             max_drawdown: 0.20,
             ..Default::default()
         }
@@ -241,7 +242,7 @@ mod tests {
     #[test]
     fn bankroll_scaled_limits_are_self_consistent() {
         for bankroll in [500.0, 10_000.0, 1_000_000.0] {
-            RiskLimits::for_bankroll(bankroll)
+            RiskLimits::for_bankroll(Notional::from_dollars(bankroll))
                 .validate()
                 .unwrap_or_else(|e| panic!("bankroll {bankroll}: {e}"));
         }
@@ -250,11 +251,11 @@ mod tests {
     #[test]
     fn an_incoherent_configuration_is_caught_up_front() {
         let mut l = RiskLimits::default();
-        l.max_position_cost = l.max_event_cost * 2.0;
+        l.max_position_cost = Notional(l.max_event_cost.0 * 2);
         assert!(l.validate().is_err());
 
         let mut l = RiskLimits::default();
-        l.max_event_cost = l.max_portfolio_cost * 2.0;
+        l.max_event_cost = Notional(l.max_portfolio_cost.0 * 2);
         assert!(l.validate().is_err());
 
         assert!(RiskLimits { max_drawdown: 1.5, ..Default::default() }.validate().is_err());
