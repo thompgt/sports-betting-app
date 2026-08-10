@@ -1,0 +1,21 @@
+[package]
+name = "edge-cli"
+description = "Runnable pipeline: venue feed to assembler to strategy to risk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "edge"
+path = "src/main.rs"
+
+[dependencies]
+edge-core = { workspace = true }
+edge-book = { workspace = true }
+edge-risk = { workspace = true }
+edge-alpha = { workspace = true }
+edge-data = { workspace = true }
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread", "macros", "time"] }

@@ -168,6 +168,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "edge-cli"
+version = "0.1.0"
+dependencies = [
+ "edge-alpha",
+ "edge-book",
+ "edge-core",
+ "edge-data",
+ "edge-risk",
+ "tokio",
+]
+
+[[package]]
 name = "edge-core"
 version = "0.1.0"
 dependencies = [

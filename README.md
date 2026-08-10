@@ -46,7 +46,7 @@ The Rust rebuild exists because detection is where a scanner stops and a trading
 
 **Systems / Rust**
 
-- Cargo **workspace** (edition 2024, `resolver = "3"`) with five crates, workspace-wide dependency and profile management, `#![forbid(unsafe_code)]` throughout.
+- Cargo **workspace** (edition 2024, `resolver = "3"`) with six crates, workspace-wide dependency and profile management, `#![forbid(unsafe_code)]` throughout.
 - A **limit order book** with no `O(log n)` in the hot path: flat tick-indexed level array, a 16-word `TickBitset` where best-bid is `leading_zeros`, and orders in an intrusive doubly-linked list over a slab so cancel is `O(1)` with no allocation.
 - **Matching engine** with time-in-force, post-only, and self-trade prevention semantics.
 - **Automated market makers** — LMSR and constant-product (CPMM) — behind one `MarketMaker` trait.
@@ -85,9 +85,11 @@ sports-betting-app/
 │   ├── edge-alpha/             # Features, online predictor, strategies
 │   │   └── src/ features.rs predictor.rs strategy.rs
 │   │            strategies/{arbitrage,value,quoting,momentum,reversion}.rs
-│   └── edge-data/              # Venue adapters, resolution, resilience
-│       └── src/ source.rs http.rs venues/{kalshi,sim}.rs assembler.rs
-│                resolve.rs similarity.rs limiter.rs backoff.rs breaker.rs time.rs
+│   ├── edge-data/              # Venue adapters, resolution, resilience
+│   │   └── src/ source.rs http.rs venues/{kalshi,sim}.rs assembler.rs
+│   │            resolve.rs similarity.rs limiter.rs backoff.rs breaker.rs time.rs
+│   └── edge-cli/               # `edge`: the pipeline, runnable end to end
+│       └── src/ main.rs
 ├── app/                        # ── LineEdge (Python service) ────────────────
 │   ├── core/                   # pydantic-settings config, rotating-file logging
 │   ├── engine/                 # resolver.py (entity matching), math_utils.py (devig/EV/Kelly)
@@ -228,7 +230,7 @@ Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PN
 
 `edge-core` is pure — no I/O, no clock, no global state — so the same code path serves a live feed and a replayed journal. Above it, ingestion (`edge-data`) pulls REST snapshots and streaming updates through one `source` trait, guards each venue with a rate limiter, backoff and circuit breaker (all pure state machines over an explicit `Ts`, so a recorded outage replays identically), resolves venue-specific tickers onto a shared `EventId` — refusing to guess when the runner-up match is comparably strong — and assembles aggregate depth into the same `OrderBook` type the matching engine uses. `edge-alpha` extracts features from that book, runs the predictor, and emits `OrderIntent`s; strategies cannot submit orders or read a clock, so everything they emit must pass `edge-risk`, where size limits *resize* an order and permission limits (kill switch, stale mark, rate limit) *reject* it — and orders that reduce risk are always allowed, even mid-breach.
 
-**Current state** (see [`docs/migration.md`](docs/migration.md) for the tracker): `edge-core`, `edge-book`, `edge-risk` and `edge-alpha` are complete with unit tests throughout; `edge-data` has venue adapters (Kalshi and a seeded simulator), resolution and the resilience primitives, with persistence and the event journal still outstanding. The planned `edge-engine` (runtime, execution simulator, backtester), `edge-server` (HTTP + WebSocket API) and `edge-cli` crates do not exist yet — the workspace currently builds five crates.
+**Current state** (see [`docs/migration.md`](docs/migration.md) for the tracker): `edge-core`, `edge-book`, `edge-risk` and `edge-alpha` are complete with unit tests throughout; `edge-data` has venue adapters (Kalshi and a seeded simulator), resolution and the resilience primitives, with persistence and the event journal still outstanding. `edge-cli` puts them together into a runnable `edge` binary and cross-crate tests. The planned `edge-engine` (execution simulator, backtester) and `edge-server` (HTTP + WebSocket API) crates do not exist yet — the workspace currently builds six crates.
 
 ---
 
@@ -307,9 +309,19 @@ python scripts/capture_docs.py          # dashboard screenshots (needs Playwrigh
 The Rust workspace:
 
 ```powershell
-cargo test              # all five crates
+cargo test              # unit tests in every crate, plus the pipeline tests
 cargo build --release   # the quant hot path is unusably slow in a debug build
+
+# Run the pipeline: simulator → assembler → strategy → risk engine
+cargo run --release -p edge-cli -- --ticks 400 --seed 7
 ```
+
+`edge` drives the whole chain against the deterministic simulator and prints
+what the session did — intents raised, how risk ruled on them, and the resulting
+book. The same seed replays identically. It is not a trading system: there is no
+venue execution and a filled order is an assumption rather than a confirmation.
+It exists so the seams between the crates can be run and watched rather than
+only unit-tested apart.
 
 On Windows with the `windows-gnu` toolchain, proc-macro DLLs fail to link unless the msvcrt-based compiler is first on `PATH` (`windows-msvc` needs none of this):
 
