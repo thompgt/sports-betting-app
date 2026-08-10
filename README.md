@@ -55,7 +55,7 @@ The Rust rebuild exists because detection is where a scanner stops and a trading
 - Typed end to end: **Pydantic v2** payload schemas, **pydantic-settings** env-driven config, **SQLAlchemy 2.x** `Mapped[]` declarative ORM.
 - `asyncio` polling service with capped exponential backoff, designed to run unattended.
 - **Fuzzy entity resolution** with RapidFuzz `token_sort_ratio` behind an exact-hash fast path, plus time-window guards.
-- **Streamlit + Plotly** dashboard; **Playwright**-driven screenshot capture; **Graphviz** diagram rendering; an executed **Jupyter** notebook that imports the real application modules rather than reimplementing them.
+- **Streamlit + Plotly** dashboard; **Playwright**-driven screenshot capture; matplotlib-rendered architecture diagram; an executed **Jupyter** notebook that imports the real application modules rather than reimplementing them.
 - **pytest** suite aimed at the parts most likely to be quietly wrong: solver convergence, CLV sign, per-outcome closeout scoping, malformed payloads, degenerate odds.
 
 ---
@@ -234,7 +234,8 @@ Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PN
 - **Python 3.11+** — for the LineEdge service, dashboard, notebook and tests.
 - **Rust 1.85+** (edition 2024) — only for the `crates/` workspace.
 - **Playwright + Chromium** — only to regenerate dashboard screenshots.
-- **Graphviz** — only to regenerate `docs/assets/architecture.png`.
+
+`requirements.txt` is a hand-maintained list of **direct** dependencies, pinned. Transitive packages are resolved by pip rather than listed, so an upstream release does not turn the file into a merge conflict.
 
 ### Install
 
@@ -294,7 +295,7 @@ $env:PYTHONPATH = "."
 python -m pytest tests/ -v
 
 # Documentation assets
-python scripts/render_architecture.py   # docs/assets/architecture.png (needs Graphviz)
+python scripts/render_architecture.py   # docs/assets/architecture.png
 python scripts/capture_docs.py          # dashboard screenshots (needs Playwright)
 ```
 
