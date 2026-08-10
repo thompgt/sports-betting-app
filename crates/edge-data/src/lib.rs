@@ -36,3 +36,4 @@ pub use backoff::{Backoff, Decision, Jitter, Retry, RetryPolicy};
 pub use breaker::{BreakerConfig, CircuitBreaker, State as BreakerState};
 pub use error::{DataError, Result};
 pub use limiter::{Bucket, RateLimiter};
+pub use source::{BookSnapshot, Guard, Level, Listing, MarketSource, VenueUpdate};
