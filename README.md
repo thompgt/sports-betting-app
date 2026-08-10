@@ -89,7 +89,8 @@ sports-betting-app/
 │   │   └── src/ source.rs http.rs venues/{kalshi,sim}.rs assembler.rs
 │   │            resolve.rs similarity.rs limiter.rs backoff.rs breaker.rs time.rs
 │   └── edge-cli/               # `edge`: the pipeline, runnable end to end
-│       └── src/ main.rs
+│       ├── src/ lib.rs main.rs
+│       └── tests/pipeline.rs   # cross-crate: Kalshi payloads through the chain
 ├── app/                        # ── LineEdge (Python service) ────────────────
 │   ├── core/                   # pydantic-settings config, rotating-file logging
 │   ├── engine/                 # resolver.py (entity matching), math_utils.py (devig/EV/Kelly)
@@ -230,7 +231,7 @@ Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PN
 
 `edge-core` is pure — no I/O, no clock, no global state — so the same code path serves a live feed and a replayed journal. Above it, ingestion (`edge-data`) pulls REST snapshots and streaming updates through one `source` trait, guards each venue with a rate limiter, backoff and circuit breaker (all pure state machines over an explicit `Ts`, so a recorded outage replays identically), resolves venue-specific tickers onto a shared `EventId` — refusing to guess when the runner-up match is comparably strong — and assembles aggregate depth into the same `OrderBook` type the matching engine uses. `edge-alpha` extracts features from that book, runs the predictor, and emits `OrderIntent`s; strategies cannot submit orders or read a clock, so everything they emit must pass `edge-risk`, where size limits *resize* an order and permission limits (kill switch, stale mark, rate limit) *reject* it — and orders that reduce risk are always allowed, even mid-breach.
 
-**Current state** (see [`docs/migration.md`](docs/migration.md) for the tracker): `edge-core`, `edge-book`, `edge-risk` and `edge-alpha` are complete with unit tests throughout; `edge-data` has venue adapters (Kalshi and a seeded simulator), resolution and the resilience primitives, with persistence and the event journal still outstanding. `edge-cli` puts them together into a runnable `edge` binary and cross-crate tests. The planned `edge-engine` (execution simulator, backtester) and `edge-server` (HTTP + WebSocket API) crates do not exist yet — the workspace currently builds six crates.
+**Current state** (see [`docs/migration.md`](docs/migration.md) for the tracker): `edge-core`, `edge-book`, `edge-risk` and `edge-alpha` are complete with unit tests throughout; `edge-data` has venue adapters (Kalshi and a seeded simulator), resolution and the resilience primitives, with persistence and the event journal still outstanding. `edge-cli` puts them together into a runnable `edge` binary, plus the cross-crate tests that replay recorded Kalshi payloads through the whole chain and assert the pipeline refuses to trade a crossed, stale or one-sided book. The planned `edge-engine` (execution simulator, backtester) and `edge-server` (HTTP + WebSocket API) crates do not exist yet — the workspace currently builds six crates.
 
 ---
 
