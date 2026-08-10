@@ -16,7 +16,11 @@ edge-book = { path = "crates/edge-book" }
 edge-risk = { path = "crates/edge-risk" }
 edge-alpha = { path = "crates/edge-alpha" }
 edge-data = { path = "crates/edge-data" }
-edge-engine = { path = "crates/edge-engine" }
+# NOTE: edge-engine, edge-server and edge-cli are planned but do not exist yet
+# (see docs/migration.md). They are deliberately not declared here: a
+# workspace.dependencies entry pointing at a missing directory resolves lazily,
+# so it sits inert until the first crate writes `edge-engine.workspace = true`
+# and the whole workspace stops resolving.
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
