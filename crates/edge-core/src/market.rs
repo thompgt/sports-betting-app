@@ -51,6 +51,18 @@ pub struct MarketSpec {
     /// Venue-native identifier, for order routing and for humans.
     pub ticker: String,
     pub title: String,
+    /// Which *outcome of the event* this contract pays on, as a key that is
+    /// canonical across venues.
+    ///
+    /// `event_id` alone is not enough to say two contracts are complements. On
+    /// a three-way event, YES("A wins") and NO("B wins") share an event and are
+    /// not opposites: both lose when C wins. Anything reasoning about cover
+    /// sets has to compare this, not the event.
+    ///
+    /// Defaults to the ticker, which is correct for a venue whose tickers are
+    /// already one-per-outcome and is at worst conservative: an unmapped
+    /// contract simply never pairs with one from another venue.
+    pub outcome: String,
     /// Which leg of the binary this contract pays on.
     pub leg: Leg,
     /// Minimum price increment, in micro-dollars. An order not on this grid is
@@ -75,6 +87,7 @@ impl MarketSpec {
             event_id,
             venue,
             title: ticker.clone(),
+            outcome: ticker.clone(),
             ticker,
             leg: Leg::Yes,
             tick_size: 10_000, // one cent

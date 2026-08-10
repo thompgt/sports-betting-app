@@ -156,6 +156,10 @@ impl Simulator {
                 [Leg::Yes, Leg::No].into_iter().map(move |leg| {
                     let mut l = Listing::new(Simulator::ticker(e, leg), Simulator::event_key(e));
                     l.title = format!("Simulated event {e} — {leg}");
+                    // Simulated events are binary: the YES and NO tickers are the
+                    // two legs of ONE outcome, so they must share an outcome key
+                    // or nothing downstream can tell they are complements.
+                    l.outcome_key = Some(Simulator::event_key(e));
                     l.leg = leg;
                     l
                 })

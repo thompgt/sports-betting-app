@@ -141,7 +141,7 @@ flowchart LR
 
   | Strategy | Trades on | Liquidity |
   |---|---|---|
-  | `Arbitrage` | mutually exclusive legs costing under $1 | takes |
+  | `Arbitrage` | a complement pair (YES + NO on the *same* outcome) or a full multi-outcome cover, costing under $1 | takes |
   | `ValueTaker` | model or consensus disagreeing with the touch | takes |
   | `QuoteMaker` | the spread, leaned against inventory | makes |
   | `Momentum` | a move that order flow confirms | takes |
@@ -153,7 +153,7 @@ flowchart LR
 
 - SQLAlchemy 2.x ORM (`app/storage/models.py`): `DetectedEdge` (`canonical_game_id`, `sport`, `market_type`, `bookmaker_name`, `outcome_name`, `odds_offered`, `fair_odds`, `calculated_ev`, `timestamp_detected`, `is_active`, `closing_line`, `clv_pct`, plus a composite index on game/market/book), `CanonicalTeam` (id, name, `aliases_json`), `CanonicalGame` (id, home/away team ids, sport, `start_time`).
 - Pydantic v2 payload schemas (`app/models/schemas/odds.py`): `OddsEvent → Bookmaker → Market → Outcome`.
-- Rust domain types (`crates/edge-core/src/types.rs`): `Price` in micro-dollars (`MICROS = 1_000_000`), validated `Prob`, `Ts` nanoseconds-since-epoch, and interned `MarketId` / `EventId` / `VenueId` / `OrderId` / `StrategyId`.
+- Rust domain types (`crates/edge-core/src/types.rs`): `Price` in micro-dollars (`MICROS = 1_000_000`), validated `Prob`, `Ts` nanoseconds-since-epoch, and interned `MarketId` / `EventId` / `VenueId` / `OrderId` / `StrategyId`. `MarketSpec` carries a cross-venue `outcome` key alongside `event_id`, because sharing an event does not make two contracts complements — on a three-way event, YES(A) and NO(B) both lose when C wins.
 
 ### Python service data flow
 
