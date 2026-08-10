@@ -10,6 +10,7 @@ from app.engine.math_utils import (
     american_to_decimal,
     decimal_to_implied_prob,
     strip_vig_power_method,
+    pool_log_odds,
     calculate_ev
 )
 from app.storage.database import DatabaseManager
@@ -98,7 +99,7 @@ class EdgeDetectionService:
             return
 
         for market_key in ["h2h"]:
-            all_outcomes_probs = []
+            per_book_fair_probs = []
             bookie_lines = []
 
             for bookmaker in event.bookmakers:
@@ -110,21 +111,27 @@ class EdgeDetectionService:
                     outcomes = {o.name: american_to_decimal(o.price) for o in market.outcomes}
                     implied_probs = [decimal_to_implied_prob(p) for p in outcomes.values()]
 
+                    # Devig each book against its OWN overround before it joins the
+                    # consensus. Averaging vigged probabilities and devigging the
+                    # average strips a margin no book actually quoted, so a book with
+                    # a fat margin drags every other book's fair price with it.
+                    fair_probs_this_book = strip_vig_power_method(implied_probs)
+
                     bookie_lines.append((bookmaker.title, outcomes))
-                    all_outcomes_probs.append(implied_probs)
+                    per_book_fair_probs.append(fair_probs_this_book)
 
                     for outcome_name, price in outcomes.items():
                         self._last_odds_seen[(str(game_id), market_key, bookmaker.title, outcome_name)] = price
                 except Exception as e:
                     logger.error("Error processing odds for %s: %s", bookmaker.title, e)
 
-            if not all_outcomes_probs:
+            if not per_book_fair_probs:
                 continue
 
-            avg_probs = [sum(p[i] for p in all_outcomes_probs) / len(all_outcomes_probs) for i in range(len(all_outcomes_probs[0]))]
-
             try:
-                fair_probs = strip_vig_power_method(avg_probs)
+                # Pool the already-fair lines in log-odds space, mirroring
+                # consensus() in crates/edge-core/src/consensus.rs.
+                fair_probs = pool_log_odds(per_book_fair_probs)
                 fair_decimals = [1 / p for p in fair_probs]
 
                 for bookie_name, outcomes in bookie_lines:
