@@ -65,6 +65,24 @@ class EdgeCache:
 
         return False
 
+    def purge_expired(self) -> int:
+        """
+        Drops entries past their TTL. An expired entry can never suppress a write
+        again - should_record() re-records on any entry older than the TTL - so it
+        is pure memory growth in a process meant to run unattended for weeks.
+        Returns the number of entries evicted.
+        """
+        cutoff = utc_now() - self.ttl
+        stale = [k for k, (seen_at, _) in self.cache.items() if seen_at < cutoff]
+        for k in stale:
+            del self.cache[k]
+        return len(stale)
+
+    def forget_game(self, game_id: str) -> None:
+        """Drops every entry for a game that will never be quoted again."""
+        for k in [k for k in self.cache if k[0] == game_id]:
+            del self.cache[k]
+
 class EdgeDetectionService:
     """
     Continuously polls an OddsProvider on an interval, resolves entities,
@@ -84,6 +102,8 @@ class EdgeDetectionService:
         # Keyed per outcome so the closing line compared against an edge is the price
         # of the same side of the market.
         self._last_odds_seen: Dict[Tuple[str, str, str, str], float] = {}
+        # Games closed out in THIS process. Not the durable record - that is the
+        # is_active flag in the database, which is what survives a restart.
         self._closed_games: Set[str] = set()
 
     async def run_forever(self) -> None:
@@ -107,6 +127,13 @@ class EdgeDetectionService:
             for event in events:
                 self._process_event(event, session)
             self._run_clv_closeouts(session)
+
+            # Everything below is bounded-memory housekeeping. Without it the
+            # three in-memory structures below only ever grow, and this service
+            # is documented as running unattended.
+            evicted = self.edge_cache.purge_expired()
+            if evicted:
+                logger.debug("Evicted %d expired edge-cache entries", evicted)
         finally:
             session.close()
 
@@ -240,8 +267,31 @@ class EdgeDetectionService:
             if game_id in self._closed_games or as_utc(game.start_time) > now:
                 continue
 
-            for (seen_game_id, market, bookie, outcome), price in self._last_odds_seen.items():
-                if seen_game_id == game_id:
-                    auditor.close_out_market(game_id, market, bookie, price, outcome_name=outcome)
+            # A restart empties _closed_games, which used to mean every started
+            # game was closed out again - overwriting closing lines and CLV that
+            # were already recorded. The is_active flag is the durable record of
+            # whether a game still has anything to close, so consult it.
+            if self._has_active_edges(session, game_id):
+                for (seen_game_id, market, bookie, outcome), price in self._last_odds_seen.items():
+                    if seen_game_id == game_id:
+                        auditor.close_out_market(game_id, market, bookie, price, outcome_name=outcome)
 
             self._closed_games.add(game_id)
+            self._forget_game(game_id)
+
+    @staticmethod
+    def _has_active_edges(session, game_id: str) -> bool:
+        return session.query(DetectedEdge).filter(
+            DetectedEdge.canonical_game_id == game_id,
+            DetectedEdge.is_active == True
+        ).first() is not None
+
+    def _forget_game(self, game_id: str) -> None:
+        """
+        Releases the per-game working state once a game is closed out. Its prices
+        are never quoted again, so retaining them only grows the process. The
+        closing lines themselves are already durable in the database.
+        """
+        for key in [k for k in self._last_odds_seen if k[0] == game_id]:
+            del self._last_odds_seen[key]
+        self.edge_cache.forget_game(game_id)
