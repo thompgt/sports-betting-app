@@ -616,12 +616,14 @@ mod tests {
         }
         let s = serde_json::to_string(&p).unwrap();
         let back: Predictor = serde_json::from_str(&s).unwrap();
-        // Compared to a tolerance rather than bit-for-bit: JSON is a decimal
-        // format and a weight that survives to the last few ULP is more than a
-        // restarted model needs.
-        for (a, b) in back.weights().iter().zip(p.weights()) {
-            assert!((a - b).abs() < 1e-12, "{a} vs {b}");
-        }
+        // Bit-for-bit, not to a tolerance. A checkpoint that reloads as a
+        // *nearly* identical model is the worst kind of persistence bug: the
+        // restarted process scores fractionally differently from the one that
+        // was evaluated, and nothing ever points at the serialiser. serde_json
+        // emits the shortest round-tripping decimal, so the only thing standing
+        // between that and an exact reload is the parser — hence the
+        // `float_roundtrip` feature in the workspace manifest.
+        assert_eq!(back.weights(), p.weights());
         assert_eq!(back.updates(), p.updates());
         assert_eq!(back.calibration(), p.calibration());
     }

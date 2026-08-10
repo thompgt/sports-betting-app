@@ -23,7 +23,7 @@ edge-data = { path = "crates/edge-data" }
 # and the whole workspace stops resolving.
 
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 
 # Release builds are what the engine actually runs under; the quant hot path is
