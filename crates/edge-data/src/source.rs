@@ -250,8 +250,15 @@ pub trait MarketSource: Send + Sync {
     /// The tradable universe. Called on a slow cadence.
     async fn listings(&self) -> Result<Vec<Listing>>;
 
-    /// Point-in-time depth for the named tickers.
-    async fn snapshot(&self, tickers: &[String]) -> Result<Vec<VenueUpdate>>;
+    /// Point-in-time depth for the named tickers, stamped `ts`.
+    ///
+    /// The timestamp is a parameter rather than a clock read inside the
+    /// adapter. [`edge_core::types::Ts`] exists precisely so that time is data:
+    /// a backtest replaying a recorded session and the live runtime feed the
+    /// same values through the same code, and an adapter that reaches for the
+    /// wall clock while decoding quietly breaks that — the replayed books carry
+    /// the time of the replay rather than the time of the market.
+    async fn snapshot(&self, tickers: &[String], ts: Ts) -> Result<Vec<VenueUpdate>>;
 
     /// Stream updates into `sink` until the connection drops or `sink` is
     /// closed, then return.

@@ -291,7 +291,11 @@ impl MarketSource for Simulator {
         Ok(Simulator::listings(self))
     }
 
-    async fn snapshot(&self, tickers: &[String]) -> Result<Vec<VenueUpdate>> {
+    /// `_ts` is ignored: the simulator advances its own clock in [`Self::step`]
+    /// and stamps updates from it, so its time is already data. Taking the
+    /// runtime's timestamp instead would let an external clock reorder a
+    /// deterministic sequence.
+    async fn snapshot(&self, tickers: &[String], _ts: Ts) -> Result<Vec<VenueUpdate>> {
         let all = self.step();
         if tickers.is_empty() {
             return Ok(all);
@@ -308,7 +312,7 @@ impl MarketSource for Simulator {
         sink: tokio::sync::mpsc::Sender<VenueUpdate>,
     ) -> Result<()> {
         while !self.is_finished() {
-            for u in self.snapshot(tickers).await? {
+            for u in self.snapshot(tickers, Ts::ZERO).await? {
                 if sink.send(u).await.is_err() {
                     return Ok(()); // the consumer went away; not an error
                 }
@@ -544,7 +548,7 @@ mod tests {
 
         let mut events = Vec::new();
         while !s.is_finished() {
-            for u in s.snapshot(&[]).await.unwrap() {
+            for u in s.snapshot(&[], Ts::ZERO).await.unwrap() {
                 a.apply(u, &mut events);
             }
         }

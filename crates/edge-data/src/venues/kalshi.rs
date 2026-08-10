@@ -355,11 +355,16 @@ impl<T: Transport> Kalshi<T> {
         })
     }
 
-    pub async fn book(&self, ticker: &str) -> Result<BookSnapshot> {
+    /// One market's book, stamped `ts`.
+    ///
+    /// The timestamp comes from the caller rather than from the wall clock so
+    /// that a recorded session replays as the session it recorded; see
+    /// [`MarketSource::snapshot`].
+    pub async fn book(&self, ticker: &str, ts: Ts) -> Result<BookSnapshot> {
         let body =
             self.get(&format!("/markets/{ticker}/orderbook"), &[("depth", "25".into())]).await?;
         let resp: OrderbookResponse = decode(VENUE, "orderbook", &body)?;
-        Ok(decode_book(&resp.orderbook, now()))
+        Ok(decode_book(&resp.orderbook, ts))
     }
 }
 
@@ -388,7 +393,7 @@ impl<T: Transport> MarketSource for Kalshi<T> {
         Ok(raw.iter().filter_map(|m| decode_listing(m).ok()).collect())
     }
 
-    async fn snapshot(&self, tickers: &[String]) -> Result<Vec<VenueUpdate>> {
+    async fn snapshot(&self, tickers: &[String], ts: Ts) -> Result<Vec<VenueUpdate>> {
         // Fan out. One round trip per ticker done strictly in series makes a
         // poll take as long as the sum of its requests, which on a few hundred
         // markets is longer than the poll interval — the snapshot is stale
@@ -398,7 +403,7 @@ impl<T: Transport> MarketSource for Kalshi<T> {
         let mut fetched: Vec<(usize, String, Result<BookSnapshot>)> =
             futures_util::stream::iter(requests)
                 .map(|(i, ticker)| async move {
-                    let book = self.book(&ticker).await;
+                    let book = self.book(&ticker, ts).await;
                     (i, ticker, book)
                 })
                 .buffer_unordered(BOOK_CONCURRENCY)
@@ -435,6 +440,8 @@ mod tests {
     use crate::http::MockTransport;
 
     const V: VenueId = VenueId(1);
+    /// The runtime's timestamp, supplied rather than read from a clock.
+    const T0: Ts = Ts(1_700_000_000_000_000_000);
 
     /// A response shaped like the real one, including the fields we ignore.
     const MARKETS: &str = r#"{
@@ -646,7 +653,7 @@ mod tests {
             .with("markets/A/orderbook", BOOK.as_bytes().to_vec())
             .with("markets/B/orderbook", BOOK.as_bytes().to_vec());
         let k = kalshi(t);
-        let updates = k.snapshot(&["A".into(), "B".into()]).await.unwrap();
+        let updates = k.snapshot(&["A".into(), "B".into()], T0).await.unwrap();
         assert_eq!(updates.len(), 2);
         assert_eq!(updates[0].ticker(), Some("A"));
     }
@@ -658,7 +665,7 @@ mod tests {
             DataError::Http { venue: VENUE.into(), status: 503, detail: String::new() },
         );
         let k = kalshi(t);
-        let err = k.snapshot(&["A".into(), "B".into()]).await.unwrap_err();
+        let err = k.snapshot(&["A".into(), "B".into()], T0).await.unwrap_err();
         assert!(err.is_transient());
         // Three attempts at B, not one. The retry belongs to the guard: the
         // whole point of routing through it is that the adapter never has to
@@ -682,7 +689,7 @@ mod tests {
         let tickers: Vec<String> = std::iter::repeat_n("A".to_string(), 20).collect();
 
         let started = std::time::Instant::now();
-        let out = k.snapshot(&tickers).await.unwrap();
+        let out = k.snapshot(&tickers, T0).await.unwrap();
         let elapsed = started.elapsed();
 
         assert_eq!(out.len(), tickers.len(), "throttling delays requests, it does not drop them");
@@ -708,7 +715,7 @@ mod tests {
             crate::breaker::BreakerConfig { consecutive_failures: 3, ..Default::default() },
         ));
         for _ in 0..20 {
-            let _ = k.book("A").await;
+            let _ = k.book("A", T0).await;
         }
         assert!(!k.is_healthy(), "twenty consecutive 500s is a dead venue");
         assert!(
@@ -728,7 +735,7 @@ mod tests {
             .with("markets/A/orderbook", BOOK.as_bytes().to_vec())
             .with("markets/B/orderbook", br#"{"orderbook": {"yes": "surprise"}}"#.to_vec());
         let k = kalshi(t);
-        let err = k.snapshot(&["A".into(), "B".into()]).await.unwrap_err();
+        let err = k.snapshot(&["A".into(), "B".into()], T0).await.unwrap_err();
         assert!(matches!(err, DataError::Decode { .. }), "got {err:?}");
     }
 
@@ -741,7 +748,7 @@ mod tests {
             DataError::Auth { venue: VENUE.into(), detail: "expired".into() },
         );
         let k = kalshi(t);
-        let err = k.snapshot(&["A".into()]).await.unwrap_err();
+        let err = k.snapshot(&["A".into()], T0).await.unwrap_err();
         assert!(matches!(err, DataError::Auth { .. }));
     }
 
@@ -757,16 +764,36 @@ mod tests {
         let k = kalshi(t);
         let tickers: Vec<String> =
             ["A", "B", "C", "D", "E"].iter().map(|s| s.to_string()).collect();
-        let updates = k.snapshot(&tickers).await.unwrap();
+        let updates = k.snapshot(&tickers, T0).await.unwrap();
         let got: Vec<&str> = updates.iter().filter_map(|u| u.ticker()).collect();
         assert_eq!(got, vec!["A", "B", "C", "D", "E"]);
+    }
+
+    #[tokio::test]
+    async fn a_book_is_stamped_with_the_time_it_was_given_not_the_time_it_was_decoded() {
+        // Time is data. The adapter used to call the wall clock while decoding,
+        // which meant a replayed session produced books stamped with the time
+        // of the replay rather than the time of the market — every
+        // time-to-resolution feature and every staleness check silently
+        // disagreeing with the recording it was supposed to reproduce.
+        let t = MockTransport::new().with("markets/A/orderbook", BOOK.as_bytes().to_vec());
+        let k = kalshi(t);
+        let book = k.book("A", Ts::from_secs(1_234)).await.unwrap();
+        assert_eq!(book.ts, Ts::from_secs(1_234));
+
+        // And the same payload replayed at a different timestamp differs only
+        // in that timestamp.
+        let again = k.book("A", Ts::from_secs(9_999)).await.unwrap();
+        assert_eq!(again.ts, Ts::from_secs(9_999));
+        assert_eq!(again.bids, book.bids);
+        assert_eq!(again.asks, book.asks);
     }
 
     #[tokio::test]
     async fn a_market_that_no_longer_exists_is_skipped_not_fatal() {
         let t = MockTransport::new().with("markets/A/orderbook", BOOK.as_bytes().to_vec());
         let k = kalshi(t);
-        let updates = k.snapshot(&["A".into(), "GONE".into()]).await.unwrap();
+        let updates = k.snapshot(&["A".into(), "GONE".into()], T0).await.unwrap();
         assert_eq!(updates.len(), 1, "a delisted market must not stall the others");
     }
 
