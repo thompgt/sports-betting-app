@@ -213,6 +213,14 @@ pub fn decode_listing(m: &RawMarket) -> Result<Listing> {
 /// rather than its own.
 const READS_PER_SECOND: f64 = 9.0;
 
+/// Pages the catalogue walk will follow before giving up.
+///
+/// At the default page size that is 20,000 markets, comfortably past Kalshi's
+/// whole open universe. Exceeding it means the cursor is not terminating, which
+/// is a venue bug or a query that is not what we think it is — either way a
+/// human has to look, so it is an error rather than a silent stop.
+const MAX_PAGES: usize = 100;
+
 /// Book requests in flight at once during a snapshot.
 ///
 /// Bounded rather than unlimited: the guard meters the send *rate*, but nothing
@@ -318,21 +326,33 @@ impl<T: Transport> Kalshi<T> {
     }
 
     /// Walk the cursor to the end of a series' catalogue.
+    ///
+    /// Fails rather than truncating. A partial catalogue is well-formed,
+    /// plausible, and silently missing markets — the engine simply would not
+    /// quote them, and nothing about the data would say so. Returning the
+    /// prefix and calling it the universe is the failure mode worth refusing.
     async fn all_markets(&self, series: Option<&str>) -> Result<Vec<RawMarket>> {
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         // Bounded: a cursor that never terminates is a venue bug, and looping
         // on it forever would look exactly like a hang.
-        for _ in 0..100 {
+        for _ in 0..MAX_PAGES {
             let page = self.markets_page(series, cursor.as_deref()).await?;
             let empty = page.markets.is_empty();
             out.extend(page.markets);
             cursor = page.cursor.filter(|c| !c.is_empty());
             if cursor.is_none() || empty {
-                break;
+                return Ok(out);
             }
         }
-        Ok(out)
+        Err(DataError::Truncated {
+            venue: VENUE.into(),
+            what: match series {
+                Some(s) => format!("series {s} catalogue"),
+                None => "catalogue".into(),
+            },
+            pages: MAX_PAGES,
+        })
     }
 
     pub async fn book(&self, ticker: &str) -> Result<BookSnapshot> {
@@ -589,6 +609,21 @@ mod tests {
         let listings = k.listings().await.unwrap();
         assert_eq!(listings.len(), 2);
         assert!(k.transport.calls()[0].contains("status=open"));
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_that_never_ends_fails_instead_of_returning_a_prefix() {
+        // Every page hands back another cursor, so the walk never terminates.
+        // Returning the first 100 pages would look exactly like a complete
+        // catalogue, and the markets past it would simply cease to exist as far
+        // as the engine is concerned.
+        let json = r#"{"markets": [{"ticker": "A", "event_ticker": "E", "status": "active"}],
+                       "cursor": "always-more"}"#;
+        let k = kalshi(MockTransport::new().with("markets", json.as_bytes().to_vec()));
+        let err = k.listings().await.unwrap_err();
+        assert!(matches!(err, DataError::Truncated { pages: MAX_PAGES, .. }), "got {err:?}");
+        assert!(!err.is_transient(), "the next walk stops in exactly the same place");
+        assert_eq!(k.transport.calls().len(), MAX_PAGES);
     }
 
     #[tokio::test]

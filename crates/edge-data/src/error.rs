@@ -48,6 +48,17 @@ pub enum DataError {
     #[error("{venue} market {ticker} is unusable: {reason}")]
     Unusable { venue: String, ticker: String, reason: String },
 
+    /// A paginated listing did not terminate within its page budget, so what
+    /// was collected is a prefix rather than the whole thing.
+    ///
+    /// Its own variant because a partial catalogue is *worse* than no
+    /// catalogue: it is well-formed, plausible, and silently missing markets.
+    /// Downstream, a market absent from the universe is a market the engine
+    /// will not quote and not hedge against, and nothing about the shape of the
+    /// data says anything is wrong.
+    #[error("{venue} {what} did not terminate within {pages} pages")]
+    Truncated { venue: String, what: String, pages: usize },
+
     /// A venue-native name that entity resolution could not place.
     #[error("could not resolve {what}: {detail}")]
     Unresolved { what: String, detail: String },
@@ -86,6 +97,9 @@ impl DataError {
             | DataError::Auth { .. }
             | DataError::Decode { .. }
             | DataError::Unusable { .. }
+            // Retrying will walk the same pages and stop in the same place.
+            // The page budget or the query is wrong, and that needs a human.
+            | DataError::Truncated { .. }
             | DataError::Unresolved { .. }
             | DataError::Config(_) => false,
         }
@@ -130,6 +144,7 @@ impl DataError {
             DataError::Auth { .. } => "auth",
             DataError::Decode { .. } => "decode",
             DataError::Unusable { .. } => "unusable",
+            DataError::Truncated { .. } => "truncated",
             DataError::Unresolved { .. } => "unresolved",
             DataError::StreamClosed { .. } => "stream_closed",
             DataError::Config(_) => "config",
