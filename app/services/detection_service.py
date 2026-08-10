@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Set
+from typing import Dict, List, Tuple, Set
 
 from app.core.config import Settings
 from app.ingestion.base import OddsProvider
@@ -99,8 +99,8 @@ class EdgeDetectionService:
             return
 
         for market_key in ["h2h"]:
-            per_book_fair_probs = []
-            bookie_lines = []
+            # (bookmaker title, {outcome name -> decimal price}, {outcome name -> fair prob})
+            bookie_lines: List[Tuple[str, Dict[str, float], Dict[str, float]]] = []
 
             for bookmaker in event.bookmakers:
                 market = next((m for m in bookmaker.markets if m.key == market_key), None)
@@ -109,39 +109,65 @@ class EdgeDetectionService:
 
                 try:
                     outcomes = {o.name: american_to_decimal(o.price) for o in market.outcomes}
-                    implied_probs = [decimal_to_implied_prob(p) for p in outcomes.values()]
+                    if len(outcomes) != len(market.outcomes):
+                        raise ValueError("Duplicate outcome names in market")
+
+                    names = list(outcomes.keys())
+                    implied_probs = [decimal_to_implied_prob(outcomes[n]) for n in names]
 
                     # Devig each book against its OWN overround before it joins the
                     # consensus. Averaging vigged probabilities and devigging the
                     # average strips a margin no book actually quoted, so a book with
                     # a fat margin drags every other book's fair price with it.
-                    fair_probs_this_book = strip_vig_power_method(implied_probs)
+                    fair_by_name = dict(zip(names, strip_vig_power_method(implied_probs)))
 
-                    bookie_lines.append((bookmaker.title, outcomes))
-                    per_book_fair_probs.append(fair_probs_this_book)
+                    bookie_lines.append((bookmaker.title, outcomes, fair_by_name))
 
                     for outcome_name, price in outcomes.items():
                         self._last_odds_seen[(str(game_id), market_key, bookmaker.title, outcome_name)] = price
                 except Exception as e:
                     logger.error("Error processing odds for %s: %s", bookmaker.title, e)
 
-            if not per_book_fair_probs:
+            if not bookie_lines:
                 continue
+
+            # Outcomes are matched by NAME, never by position. Feeds list outcomes in
+            # whatever order they please; indexing positionally pairs one book's home
+            # fair probability with another book's away price and manufactures a large
+            # phantom edge. Books quoting a different outcome set entirely (e.g. a
+            # three-way line with a draw against two-way moneylines) are not
+            # comparable and are dropped rather than mis-indexed.
+            consensus_names = self._consensus_outcome_set(bookie_lines)
+            if not consensus_names:
+                continue
+
+            comparable = [
+                line for line in bookie_lines if set(line[2].keys()) == set(consensus_names)
+            ]
+            dropped = [line[0] for line in bookie_lines if line not in comparable]
+            if dropped:
+                logger.warning(
+                    "Excluding %s from the %s consensus: outcome set differs from %s",
+                    ", ".join(dropped), market_key, sorted(consensus_names)
+                )
 
             try:
                 # Pool the already-fair lines in log-odds space, mirroring
                 # consensus() in crates/edge-core/src/consensus.rs.
-                fair_probs = pool_log_odds(per_book_fair_probs)
-                fair_decimals = [1 / p for p in fair_probs]
+                pooled = pool_log_odds(
+                    [[fair_by_name[n] for n in consensus_names] for _, _, fair_by_name in comparable]
+                )
+                fair_probs = dict(zip(consensus_names, pooled))
+                fair_decimals = {n: 1 / p for n, p in fair_probs.items()}
 
-                for bookie_name, outcomes in bookie_lines:
-                    for i, (outcome_name, price) in enumerate(outcomes.items()):
-                        ev = calculate_ev(price, fair_probs[i])
+                for bookie_name, outcomes, _ in comparable:
+                    for outcome_name, price in outcomes.items():
+                        ev = calculate_ev(price, fair_probs[outcome_name])
 
                         if ev > self.settings.ev_threshold:
                             logger.info(
                                 "!!! EDGE DETECTED !!! %s | %s | Price: %.2f | Fair: %.2f | EV: %.2f%%",
-                                bookie_name, outcome_name, price, fair_decimals[i], ev * 100
+                                bookie_name, outcome_name, price, fair_decimals[outcome_name], ev * 100
                             )
 
                             if self.edge_cache.should_record(str(game_id), market_key, bookie_name, ev):
@@ -152,7 +178,7 @@ class EdgeDetectionService:
                                     bookmaker_name=bookie_name,
                                     outcome_name=outcome_name,
                                     odds_offered=price,
-                                    fair_odds=fair_decimals[i],
+                                    fair_odds=fair_decimals[outcome_name],
                                     calculated_ev=ev
                                 )
                                 session.add(edge_record)
@@ -162,6 +188,26 @@ class EdgeDetectionService:
                                 logger.info("Edge already in cache and stable, skipping DB write.")
             except Exception as e:
                 logger.error("Math Error: %s", e)
+
+    @staticmethod
+    def _consensus_outcome_set(bookie_lines) -> List[str]:
+        """
+        Picks the outcome set the consensus is built on: the one the most books agree
+        on, ties broken by whichever appeared first. Returns the names in that book's
+        listing order, which is only used to keep the pooled vectors aligned - every
+        lookup downstream is by name.
+        """
+        counts: Dict[frozenset, int] = {}
+        order: Dict[frozenset, List[str]] = {}
+        for _, _, fair_by_name in bookie_lines:
+            key = frozenset(fair_by_name.keys())
+            counts[key] = counts.get(key, 0) + 1
+            order.setdefault(key, list(fair_by_name.keys()))
+
+        if not counts:
+            return []
+        best = max(counts, key=lambda k: counts[k])
+        return order[best]
 
     def _run_clv_closeouts(self, session) -> None:
         auditor = EdgeAuditor(session)
