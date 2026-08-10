@@ -40,14 +40,29 @@ class _StubResolver:
         return self.game_id
 
 
+class _StubQuery:
+    def __init__(self, has_active):
+        self._has_active = has_active
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return object() if self._has_active else None
+
+
 class _StubSession:
     """Collects the DetectedEdge rows the service tries to persist."""
 
-    def __init__(self):
+    def __init__(self, has_active_edges=True):
         self.added = []
+        self._has_active_edges = has_active_edges
 
     def add(self, obj):
         self.added.append(obj)
+
+    def query(self, *args, **kwargs):
+        return _StubQuery(self._has_active_edges)
 
     def commit(self):
         pass
@@ -139,6 +154,90 @@ def test_clv_closeouts_survive_a_timezone_aware_kickoff_time():
     # Both started games close out; the future one does not.
     assert set(closed) == {str(naive_id), str(aware_id)}
     assert svc._closed_games == {str(naive_id), str(aware_id)}
+
+
+def test_closed_out_games_release_their_in_memory_state():
+    """The poller is documented as running unattended; nothing may grow forever."""
+    from types import SimpleNamespace
+
+    svc, resolver = _service()
+    started = datetime.now(timezone.utc) - timedelta(hours=2)
+    gid = uuid4()
+    resolver.games = [SimpleNamespace(id=gid, start_time=started)]
+    other = str(uuid4())
+
+    svc._last_odds_seen[(str(gid), "h2h", "BookA", "Boston Celtics")] = 1.91
+    svc._last_odds_seen[(other, "h2h", "BookA", "Boston Celtics")] = 1.91
+    svc.edge_cache.cache[(str(gid), "h2h", "BookA")] = (datetime.now(timezone.utc), 0.03)
+    svc.edge_cache.cache[(other, "h2h", "BookA")] = (datetime.now(timezone.utc), 0.03)
+
+    import app.services.detection_service as mod
+
+    class _Auditor:
+        def __init__(self, session):
+            pass
+
+        def close_out_market(self, *a, **kw):
+            pass
+
+    original, mod.EdgeAuditor = mod.EdgeAuditor, _Auditor
+    try:
+        svc._run_clv_closeouts(_StubSession())
+    finally:
+        mod.EdgeAuditor = original
+
+    # The closed game's working state is gone; the still-open game's is untouched.
+    assert not any(k[0] == str(gid) for k in svc._last_odds_seen)
+    assert not any(k[0] == str(gid) for k in svc.edge_cache.cache)
+    assert (other, "h2h", "BookA", "Boston Celtics") in svc._last_odds_seen
+    assert (other, "h2h", "BookA") in svc.edge_cache.cache
+
+
+def test_a_restart_does_not_reclose_games_already_closed_in_the_database():
+    from types import SimpleNamespace
+
+    svc, resolver = _service()
+    gid = uuid4()
+    resolver.games = [
+        SimpleNamespace(id=gid, start_time=datetime.now(timezone.utc) - timedelta(hours=2))
+    ]
+    svc._last_odds_seen[(str(gid), "h2h", "BookA", "Boston Celtics")] = 1.91
+
+    closed = []
+
+    class _Auditor:
+        def __init__(self, session):
+            pass
+
+        def close_out_market(self, game_id, *a, **kw):
+            closed.append(game_id)
+
+    import app.services.detection_service as mod
+
+    original, mod.EdgeAuditor = mod.EdgeAuditor, _Auditor
+    try:
+        # is_active is already False for every edge on this game: it was closed
+        # out before the restart, so there is nothing left to close.
+        svc._run_clv_closeouts(_StubSession(has_active_edges=False))
+    finally:
+        mod.EdgeAuditor = original
+
+    assert closed == []
+    assert str(gid) in svc._closed_games
+
+
+def test_edge_cache_purges_entries_past_their_ttl():
+    from app.services.detection_service import EdgeCache
+
+    cache = EdgeCache(ttl_minutes=15)
+    now = datetime.now(timezone.utc)
+    cache.cache[("g1", "h2h", "Fresh")] = (now - timedelta(minutes=1), 0.03)
+    cache.cache[("g1", "h2h", "Stale")] = (now - timedelta(minutes=90), 0.03)
+
+    assert cache.purge_expired() == 1
+    assert list(cache.cache) == [("g1", "h2h", "Fresh")]
+    # An expired entry could never suppress a write anyway, so nothing changes.
+    assert cache.should_record("g1", "h2h", "Stale", 0.03) is True
 
 
 def test_pool_log_odds_is_the_logit_mean_and_sums_to_one():

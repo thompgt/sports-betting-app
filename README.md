@@ -214,9 +214,9 @@ Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PN
    ```
 
    Anything above `ev_threshold` (default 2%) is an edge.
-6. **Deduplicate.** `EdgeCache` keys on `(game, market, bookmaker)` and suppresses a repeat write for a standing price unless the TTL lapses or EV moves past the spike threshold — otherwise a single unchanged price would be re-recorded every cycle.
+6. **Deduplicate.** `EdgeCache` keys on `(game, market, bookmaker)` and suppresses a repeat write for a standing price unless the TTL lapses or EV moves past the spike threshold — otherwise a single unchanged price would be re-recorded every cycle. Entries past their TTL are purged at the end of every poll, and a game's cache and last-seen-price entries are released once it closes out, so the working set stays bounded over a long unattended run.
 7. **Persist.** Surviving edges are written to the `detected_edges` table in SQLite.
-8. **Audit.** Once a canonical game's start time has passed, `EdgeAuditor.close_out_market()` marks its active edges inactive, records the last-seen price as the closing line, and computes `clv_pct = implied(closing) − implied(offered)`, scoped per outcome. Positive CLV means the flagged price beat the close.
+8. **Audit.** Once a canonical game's start time has passed, `EdgeAuditor.close_out_market()` marks its active edges inactive, records the last-seen price as the closing line, and computes `clv_pct = implied(closing) − implied(offered)`, scoped per outcome. Positive CLV means the flagged price beat the close. Whether a game still has anything to close is read from the `is_active` flag rather than from process memory, so a restart does not re-close games and overwrite closing lines already recorded.
 9. **Display.** The Streamlit dashboard reads the same database — live edges ranked by EV, historical detection counts per cycle and by sport, and the CLV audit (predicted fair vs. actual close, plus the CLV distribution).
 
 ### The Rust engine
