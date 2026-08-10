@@ -46,11 +46,7 @@ pub struct SourceQuote {
 
 impl SourceQuote {
     pub fn new(venue: VenueId, implied: Vec<Prob>, weight: f64) -> Self {
-        SourceQuote {
-            venue,
-            implied,
-            weight: weight.max(0.0),
-        }
+        SourceQuote { venue, implied, weight: weight.max(0.0) }
     }
 }
 
@@ -73,12 +69,7 @@ pub struct ConsensusConfig {
 
 impl Default for ConsensusConfig {
     fn default() -> Self {
-        ConsensusConfig {
-            method: DevigMethod::Power,
-            trim: 0.1,
-            min_sources: 2,
-            extremise: 1.0,
-        }
+        ConsensusConfig { method: DevigMethod::Power, trim: 0.1, min_sources: 2, extremise: 1.0 }
     }
 }
 
@@ -143,9 +134,7 @@ pub fn consensus(sources: &[SourceQuote], cfg: &ConsensusConfig) -> Result<Conse
     }
 
     if fair_by_source.len() < cfg.min_sources.max(1) {
-        return Err(EdgeError::DegenerateMarket(
-            "too few usable sources to form a consensus",
-        ));
+        return Err(EdgeError::DegenerateMarket("too few usable sources to form a consensus"));
     }
 
     let n_sources = fair_by_source.len();
@@ -154,17 +143,16 @@ pub fn consensus(sources: &[SourceQuote], cfg: &ConsensusConfig) -> Result<Conse
     let mut max_disagreement: f64 = 0.0;
 
     for i in 0..n_outcomes {
-        let mut points: Vec<(f64, f64)> = fair_by_source
-            .iter()
-            .map(|(f, w)| (Prob::clamped_open(f[i]).logit(), *w))
-            .collect();
+        let mut points: Vec<(f64, f64)> =
+            fair_by_source.iter().map(|(f, w)| (Prob::clamped_open(f[i]).logit(), *w)).collect();
 
         // Dispersion and disagreement are measured on the untrimmed pool, in
         // probability space, because that is the scale sizing cares about.
         let probs: Vec<f64> = fair_by_source.iter().map(|(f, _)| f[i]).collect();
         let mean_p = probs.iter().sum::<f64>() / n_sources as f64;
         let sd = if n_sources > 1 {
-            (probs.iter().map(|p| (p - mean_p).powi(2)).sum::<f64>() / (n_sources - 1) as f64).sqrt()
+            (probs.iter().map(|p| (p - mean_p).powi(2)).sum::<f64>() / (n_sources - 1) as f64)
+                .sqrt()
         } else {
             0.0
         };
@@ -175,11 +163,7 @@ pub fn consensus(sources: &[SourceQuote], cfg: &ConsensusConfig) -> Result<Conse
         // Trim symmetrically, then take the weighted mean of what remains.
         points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         let k = ((points.len() as f64) * cfg.trim.clamp(0.0, 0.49)).floor() as usize;
-        let kept = if points.len() > 2 * k {
-            &points[k..points.len() - k]
-        } else {
-            &points[..]
-        };
+        let kept = if points.len() > 2 * k { &points[k..points.len() - k] } else { &points[..] };
 
         let wsum: f64 = kept.iter().map(|(_, w)| w).sum();
         let logit = if wsum > 0.0 {
@@ -278,22 +262,10 @@ mod tests {
         let mut sources: Vec<SourceQuote> = (1..=4).map(|v| quote(v, &[-110, -110], 1.0)).collect();
         sources.push(quote(5, &[-2000, 1000], 1.0));
 
-        let untrimmed = consensus(
-            &sources,
-            &ConsensusConfig {
-                trim: 0.0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let trimmed = consensus(
-            &sources,
-            &ConsensusConfig {
-                trim: 0.2,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let untrimmed =
+            consensus(&sources, &ConsensusConfig { trim: 0.0, ..Default::default() }).unwrap();
+        let trimmed =
+            consensus(&sources, &ConsensusConfig { trim: 0.2, ..Default::default() }).unwrap();
 
         let err_untrimmed = (untrimmed.fair[0].get() - 0.5).abs();
         let err_trimmed = (trimmed.fair[0].get() - 0.5).abs();
@@ -320,14 +292,7 @@ mod tests {
                 1.0,
             ),
         ];
-        let c = consensus(
-            &sources,
-            &ConsensusConfig {
-                trim: 0.0,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let c = consensus(&sources, &ConsensusConfig { trim: 0.0, ..Default::default() }).unwrap();
         sums_to_one(&c);
         assert!(
             c.fair[0].get() < 0.10,
@@ -339,26 +304,15 @@ mod tests {
 
     #[test]
     fn extremisation_sharpens_the_pool() {
-        let sources = vec![
-            quote(1, &[-200, 170], 1.0),
-            quote(2, &[-190, 165], 1.0),
-        ];
+        let sources = vec![quote(1, &[-200, 170], 1.0), quote(2, &[-190, 165], 1.0)];
         let plain = consensus(
             &sources,
-            &ConsensusConfig {
-                trim: 0.0,
-                extremise: 1.0,
-                ..Default::default()
-            },
+            &ConsensusConfig { trim: 0.0, extremise: 1.0, ..Default::default() },
         )
         .unwrap();
         let sharp = consensus(
             &sources,
-            &ConsensusConfig {
-                trim: 0.0,
-                extremise: 1.3,
-                ..Default::default()
-            },
+            &ConsensusConfig { trim: 0.0, extremise: 1.3, ..Default::default() },
         )
         .unwrap();
         assert!(sharp.fair[0].get() > plain.fair[0].get());
@@ -370,10 +324,7 @@ mod tests {
         let sources = vec![quote(1, &[-110, -110], 1.0)];
         assert!(consensus(&sources, &ConsensusConfig::default()).is_err());
         // ...unless the caller explicitly accepts one.
-        let cfg = ConsensusConfig {
-            min_sources: 1,
-            ..Default::default()
-        };
+        let cfg = ConsensusConfig { min_sources: 1, ..Default::default() };
         assert!(consensus(&sources, &cfg).is_ok());
     }
 
@@ -381,11 +332,7 @@ mod tests {
     fn a_broken_source_is_dropped_not_fatal() {
         let mut sources = vec![quote(1, &[-110, -110], 1.0), quote(2, &[-110, -110], 1.0)];
         // A venue quoting certainty — the devigger rejects it.
-        sources.push(SourceQuote::new(
-            VenueId(3),
-            vec![Prob::ONE, Prob::new(0.5).unwrap()],
-            1.0,
-        ));
+        sources.push(SourceQuote::new(VenueId(3), vec![Prob::ONE, Prob::new(0.5).unwrap()], 1.0));
         // ...and one with the wrong number of outcomes.
         sources.push(SourceQuote::new(VenueId(4), vec![Prob::HALF], 1.0));
 

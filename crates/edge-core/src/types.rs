@@ -34,7 +34,9 @@ pub const MICROS: i64 = 1_000_000;
 /// time has to be data rather than an ambient call to the system clock — the
 /// backtester and the live runtime feed the identical `Ts` values through the
 /// identical code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct Ts(pub i64);
 
@@ -205,7 +207,9 @@ impl Ord for Prob {
 ///
 /// Signed because spreads, edges and PnL deltas are all naturally expressed in
 /// the same unit and are frequently negative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct Price(pub i64);
 
@@ -269,11 +273,8 @@ impl Price {
             return self;
         }
         let half = tick / 2;
-        let r = if self.0 >= 0 {
-            (self.0 + half) / tick * tick
-        } else {
-            (self.0 - half) / tick * tick
-        };
+        let r =
+            if self.0 >= 0 { (self.0 + half) / tick * tick } else { (self.0 - half) / tick * tick };
         Price(r)
     }
 
@@ -286,7 +287,9 @@ impl Price {
         }
         let r = match side {
             Side::Buy => self.0.div_euclid(tick) * tick,
-            Side::Sell => self.0.div_euclid(tick) * tick + if self.0.rem_euclid(tick) != 0 { tick } else { 0 },
+            Side::Sell => {
+                self.0.div_euclid(tick) * tick + if self.0.rem_euclid(tick) != 0 { tick } else { 0 }
+            }
         };
         Price(r)
     }
@@ -333,7 +336,9 @@ impl fmt::Display for Price {
 // ---------------------------------------------------------------------------
 
 /// A number of contracts. Signed so a position can be expressed in the same type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct Qty(pub i64);
 
@@ -418,7 +423,9 @@ impl fmt::Display for Qty {
 }
 
 /// Money, in micro-dollars. `Price * Qty` lands here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct Notional(pub i64);
 

@@ -22,11 +22,7 @@ pub enum EdgeError {
     InvalidQuantity(i64),
 
     #[error("{method} failed to converge after {iterations} iterations (residual {residual:e})")]
-    Convergence {
-        method: &'static str,
-        iterations: u32,
-        residual: f64,
-    },
+    Convergence { method: &'static str, iterations: u32, residual: f64 },
 
     #[error("degenerate market: {0}")]
     DegenerateMarket(&'static str),

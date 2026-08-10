@@ -138,17 +138,19 @@ impl Listing {
     }
 
     /// The engine-side spec, once the event key has been interned.
-    pub fn to_spec(&self, id: MarketId, event: edge_core::types::EventId, venue: VenueId) -> MarketSpec {
+    pub fn to_spec(
+        &self,
+        id: MarketId,
+        event: edge_core::types::EventId,
+        venue: VenueId,
+    ) -> MarketSpec {
         MarketSpec {
             id,
             event_id: event,
             venue,
             ticker: self.ticker.clone(),
             title: self.title.clone(),
-            outcome: self
-                .outcome_key
-                .clone()
-                .unwrap_or_else(|| self.ticker.clone()),
+            outcome: self.outcome_key.clone().unwrap_or_else(|| self.ticker.clone()),
             leg: self.leg,
             tick_size: self.tick_size,
             min_qty: self.min_qty,
@@ -167,18 +169,44 @@ pub enum VenueUpdate {
     /// A market appeared, or its metadata changed.
     Listing(Listing),
     /// Full depth. Replaces whatever was held for this market.
-    Book { ticker: String, book: BookSnapshot },
+    Book {
+        ticker: String,
+        book: BookSnapshot,
+    },
     /// One level changed. `qty` is the new resting total at that price, not a
     /// delta — every venue worth integrating publishes absolutes, because a
     /// delta stream with no snapshot to anchor it cannot be verified.
-    Level { ticker: String, side: Side, price: Price, qty: Qty, seq: u64, ts: Ts },
-    Trade { ticker: String, price: Price, qty: Qty, taker: Side, ts: Ts },
-    Status { ticker: String, status: MarketStatus, ts: Ts },
+    Level {
+        ticker: String,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        seq: u64,
+        ts: Ts,
+    },
+    Trade {
+        ticker: String,
+        price: Price,
+        qty: Qty,
+        taker: Side,
+        ts: Ts,
+    },
+    Status {
+        ticker: String,
+        status: MarketStatus,
+        ts: Ts,
+    },
     /// Resolved. `outcome` is whether the YES side paid.
-    Settled { ticker: String, outcome: bool, ts: Ts },
+    Settled {
+        ticker: String,
+        outcome: bool,
+        ts: Ts,
+    },
     /// Proof of life on an otherwise silent stream. A market with no trades is
     /// indistinguishable from a dead socket without one.
-    Heartbeat { ts: Ts },
+    Heartbeat {
+        ts: Ts,
+    },
 }
 
 impl VenueUpdate {
@@ -282,9 +310,9 @@ impl Guard {
         let venue = venue.into();
         // Seeded from the venue name so two processes against the same venue
         // jitter differently, and one process replays identically.
-        let seed = venue.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-            (h ^ b as u64).wrapping_mul(0x1000_0000_01b3)
-        });
+        let seed = venue
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x1000_0000_01b3));
         Guard {
             venue,
             policy,

@@ -194,7 +194,8 @@ mod tests {
 
     #[test]
     fn kinds_are_bounded_and_do_not_leak_detail() {
-        let e = DataError::Transport { venue: "v".into(), detail: "connection reset by peer".into() };
+        let e =
+            DataError::Transport { venue: "v".into(), detail: "connection reset by peer".into() };
         assert_eq!(e.kind(), "transport");
         assert!(!e.kind().contains("peer"));
     }

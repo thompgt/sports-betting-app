@@ -40,6 +40,9 @@ pub mod strategy;
 pub use features::{FEATURE_NAMES, FeatureExtractor, Features, N_FEATURES};
 pub use predictor::{Prediction, Predictor, PredictorConfig, Standardizer};
 pub use strategies::{
-    ArbConfig, Arbitrage, MeanReversion, Momentum, MomentumConfig, QuoteConfig, QuoteMaker, ReversionConfig, ValueConfig, ValueTaker,
+    ArbConfig, Arbitrage, MeanReversion, Momentum, MomentumConfig, QuoteConfig, QuoteMaker,
+    ReversionConfig, ValueConfig, ValueTaker,
 };
-pub use strategy::{Action, EventView, MarketView, OrderIntent, RestingOrder, Strategy, StrategyStats};
+pub use strategy::{
+    Action, EventView, MarketView, OrderIntent, RestingOrder, Strategy, StrategyStats,
+};

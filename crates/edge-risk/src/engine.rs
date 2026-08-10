@@ -167,7 +167,15 @@ impl RiskEngine {
     }
 
     /// Book a fill.
-    pub fn on_fill(&mut self, market: MarketId, side: Side, price: Price, qty: Qty, fee: f64, now: Ts) {
+    pub fn on_fill(
+        &mut self,
+        market: MarketId,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        fee: f64,
+        now: Ts,
+    ) {
         self.portfolio.apply_fill(market, side, price, qty, fee);
         self.set_mark(market, price, now);
         self.on_venue_accept();
@@ -184,8 +192,8 @@ impl RiskEngine {
             return;
         }
         let elapsed = (now.as_nanos() - self.last_refill.as_nanos()).max(0) as f64 / 1e9;
-        self.tokens =
-            (self.tokens + elapsed * self.limits.max_orders_per_second).min(self.limits.order_burst);
+        self.tokens = (self.tokens + elapsed * self.limits.max_orders_per_second)
+            .min(self.limits.order_burst);
         self.last_refill = now;
     }
 
@@ -236,11 +244,8 @@ impl RiskEngine {
         // How much of this order merely unwinds what is already held. Always
         // permitted — even under a kill switch, even over every limit.
         let held = self.portfolio.qty(market).get();
-        let closes = if held != 0 && (held > 0) != (side == Side::Buy) {
-            want.min(held.abs())
-        } else {
-            0
-        };
+        let closes =
+            if held != 0 && (held > 0) != (side == Side::Buy) { want.min(held.abs()) } else { 0 };
 
         if self.kill.is_some() {
             return if closes > 0 {
@@ -280,11 +285,8 @@ impl RiskEngine {
         }
 
         // Cost of one contract of the leg this order would acquire.
-        let leg_price = if side == Side::Buy {
-            price.dollars()
-        } else {
-            price.complement().dollars()
-        };
+        let leg_price =
+            if side == Side::Buy { price.dollars() } else { price.complement().dollars() };
         let unit_cost = leg_price + fee_per_contract;
         if unit_cost <= 0.0 {
             return RiskDecision::Reject(RiskBreach::InvalidPrice);
@@ -327,16 +329,9 @@ impl RiskEngine {
         );
 
         // Capital at risk in this market.
-        let pos_cost = self
-            .portfolio
-            .position(market)
-            .map(|p| p.capital_at_risk())
-            .unwrap_or(0.0);
-        let freed = self
-            .portfolio
-            .position(market)
-            .map(|p| closes as f64 * p.avg_cost)
-            .unwrap_or(0.0);
+        let pos_cost = self.portfolio.position(market).map(|p| p.capital_at_risk()).unwrap_or(0.0);
+        let freed =
+            self.portfolio.position(market).map(|p| closes as f64 * p.avg_cost).unwrap_or(0.0);
         bind(
             ((self.limits.max_position_cost - (pos_cost - freed)) / unit_cost).floor() as i64,
             RiskBreach::PositionCost,
@@ -536,8 +531,7 @@ mod tests {
     fn a_flip_closes_freely_and_opens_under_the_limits() {
         let mut e = engine();
         e.trip(KillReason::Manual);
-        e.portfolio_mut()
-            .apply_fill(M, Side::Buy, Price::from_cents(50), Qty(100), 0.0);
+        e.portfolio_mut().apply_fill(M, Side::Buy, Price::from_cents(50), Qty(100), 0.0);
         // Sell 150: 100 closes, 50 would open a short — refused while halted.
         let d = e.check(M, Side::Sell, Price::from_cents(50), Qty(150), 0.0, now());
         assert_eq!(d, RiskDecision::Resize(Qty(100), RiskBreach::KillSwitchActive));
@@ -550,8 +544,7 @@ mod tests {
         let d = e.check(unknown, Side::Buy, Price::from_cents(50), Qty(10), 0.0, now());
         assert_eq!(d, RiskDecision::Reject(RiskBreach::NoMark));
 
-        e.portfolio_mut()
-            .apply_fill(unknown, Side::Buy, Price::from_cents(50), Qty(10), 0.0);
+        e.portfolio_mut().apply_fill(unknown, Side::Buy, Price::from_cents(50), Qty(10), 0.0);
         let d = e.check(unknown, Side::Sell, Price::from_cents(50), Qty(10), 0.0, now());
         assert_eq!(d, RiskDecision::Approve(Qty(10)));
     }

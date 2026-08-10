@@ -183,11 +183,7 @@ pub struct KellyPolicy {
 
 impl Default for KellyPolicy {
     fn default() -> Self {
-        KellyPolicy {
-            fraction: 0.25,
-            max_fraction: 0.05,
-            estimate_sd: 0.02,
-        }
+        KellyPolicy { fraction: 0.25, max_fraction: 0.05, estimate_sd: 0.02 }
     }
 }
 
@@ -403,15 +399,9 @@ mod tests {
         let gross = assess(price, fair, Side::Buy, Qty(100), &FREE, Liquidity::Taker).unwrap();
         assert!(gross.is_profitable(), "1c gross edge should look good pre-fee");
 
-        let net = assess(
-            price,
-            fair,
-            Side::Buy,
-            Qty(100),
-            &FeeModel::KALSHI_STANDARD,
-            Liquidity::Taker,
-        )
-        .unwrap();
+        let net =
+            assess(price, fair, Side::Buy, Qty(100), &FeeModel::KALSHI_STANDARD, Liquidity::Taker)
+                .unwrap();
         assert!(
             !net.is_profitable(),
             "1c edge must not survive a 1.75c fee, got EV {}",
@@ -424,24 +414,12 @@ mod tests {
     fn maker_and_taker_are_priced_differently() {
         let fair = Prob::new(0.53).unwrap();
         let price = Price::from_cents(50);
-        let taker = assess(
-            price,
-            fair,
-            Side::Buy,
-            Qty(100),
-            &FeeModel::KALSHI_STANDARD,
-            Liquidity::Taker,
-        )
-        .unwrap();
-        let maker = assess(
-            price,
-            fair,
-            Side::Buy,
-            Qty(100),
-            &FeeModel::KALSHI_STANDARD,
-            Liquidity::Maker,
-        )
-        .unwrap();
+        let taker =
+            assess(price, fair, Side::Buy, Qty(100), &FeeModel::KALSHI_STANDARD, Liquidity::Taker)
+                .unwrap();
+        let maker =
+            assess(price, fair, Side::Buy, Qty(100), &FeeModel::KALSHI_STANDARD, Liquidity::Maker)
+                .unwrap();
         assert!(maker.ev_per_contract > taker.ev_per_contract);
     }
 
@@ -543,11 +521,7 @@ mod tests {
             Liquidity::Taker,
         )
         .unwrap();
-        let policy = KellyPolicy {
-            fraction: 0.25,
-            max_fraction: 1.0,
-            estimate_sd: 0.0,
-        };
+        let policy = KellyPolicy { fraction: 0.25, max_fraction: 1.0, estimate_sd: 0.0 };
         // f* = 0.2/0.5 = 0.4; quarter Kelly = 0.10 of a $10,000 bankroll = $1,000
         // at 50c a contract = 2,000 contracts.
         assert_eq!(policy.size(&a, 10_000.0), Qty(2_000));
@@ -629,9 +603,13 @@ mod tests {
     #[test]
     fn clv_signs_correctly_for_both_sides() {
         // Bought at 40c, market closed at 45c: we got the better of it.
-        assert!((clv(Price::from_cents(40), Price::from_cents(45), Side::Buy) - 0.05).abs() < 1e-12);
+        assert!(
+            (clv(Price::from_cents(40), Price::from_cents(45), Side::Buy) - 0.05).abs() < 1e-12
+        );
         // Sold at 40c and it closed at 45c: the market went against us.
-        assert!((clv(Price::from_cents(40), Price::from_cents(45), Side::Sell) + 0.05).abs() < 1e-12);
+        assert!(
+            (clv(Price::from_cents(40), Price::from_cents(45), Side::Sell) + 0.05).abs() < 1e-12
+        );
     }
 
     #[test]
@@ -639,6 +617,8 @@ mod tests {
         assert!(
             assess(Price::ZERO, Prob::HALF, Side::Buy, Qty(1), &FREE, Liquidity::Taker).is_err()
         );
-        assert!(assess(Price::ONE, Prob::HALF, Side::Buy, Qty(1), &FREE, Liquidity::Taker).is_err());
+        assert!(
+            assess(Price::ONE, Prob::HALF, Side::Buy, Qty(1), &FREE, Liquidity::Taker).is_err()
+        );
     }
 }

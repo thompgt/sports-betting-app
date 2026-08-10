@@ -331,7 +331,12 @@ mod tests {
     }
 
     fn small() -> SimConfig {
-        SimConfig { events: 2, horizon_secs: 10.0, step: Duration::from_secs(1), ..Default::default() }
+        SimConfig {
+            events: 2,
+            horizon_secs: 10.0,
+            step: Duration::from_secs(1),
+            ..Default::default()
+        }
     }
 
     fn tape(cfg: SimConfig, steps: usize) -> Vec<VenueUpdate> {

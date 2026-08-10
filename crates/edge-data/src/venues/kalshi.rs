@@ -222,7 +222,11 @@ impl<T: Transport> Kalshi<T> {
         self
     }
 
-    async fn markets_page(&self, series: Option<&str>, cursor: Option<&str>) -> Result<MarketsPage> {
+    async fn markets_page(
+        &self,
+        series: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<MarketsPage> {
         let mut query: Vec<(&str, String)> =
             vec![("limit", self.page_size.to_string()), ("status", "open".into())];
         if let Some(s) = series {
@@ -497,12 +501,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_transient_failure_on_one_book_is_propagated_for_the_guard_to_retry() {
-        let t = MockTransport::new()
-            .with("markets/A/orderbook", BOOK.as_bytes().to_vec())
-            .failing(
-                "markets/B/orderbook",
-                DataError::Http { venue: VENUE.into(), status: 503, detail: String::new() },
-            );
+        let t = MockTransport::new().with("markets/A/orderbook", BOOK.as_bytes().to_vec()).failing(
+            "markets/B/orderbook",
+            DataError::Http { venue: VENUE.into(), status: 503, detail: String::new() },
+        );
         let k = kalshi(t);
         let err = k.snapshot(&["A".into(), "B".into()]).await.unwrap_err();
         assert!(err.is_transient());
@@ -518,7 +520,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_schema_change_is_reported_as_a_decode_failure() {
-        let k = kalshi(MockTransport::new().with("markets", br#"{"markets": "surprise"}"#.to_vec()));
+        let k =
+            kalshi(MockTransport::new().with("markets", br#"{"markets": "surprise"}"#.to_vec()));
         let err = k.listings().await.unwrap_err();
         assert!(matches!(err, DataError::Decode { .. }));
         assert!(!err.is_transient());

@@ -93,10 +93,8 @@ pub fn monte_carlo_var(
     marks: &HashMap<MarketId, Price>,
     cfg: &VarConfig,
 ) -> VarResult {
-    let positions: Vec<_> = portfolio
-        .open_positions()
-        .filter_map(|p| marks.get(&p.market).map(|m| (*p, *m)))
-        .collect();
+    let positions: Vec<_> =
+        portfolio.open_positions().filter_map(|p| marks.get(&p.market).map(|m| (*p, *m))).collect();
 
     if positions.is_empty() || cfg.paths == 0 {
         return VarResult {
@@ -123,21 +121,15 @@ pub fn monte_carlo_var(
             }
             // A market with no known event is its own group — conservative in
             // that it does not accidentally net against anything else.
-            None => {
-                
-                event_index.len() + market_group.len() + 1_000_000
-            }
+            None => event_index.len() + market_group.len() + 1_000_000,
         };
         market_group.push(group);
     }
     let mut group_ids: Vec<usize> = market_group.clone();
     group_ids.sort_unstable();
     group_ids.dedup();
-    let group_slot: HashMap<usize, usize> = group_ids
-        .iter()
-        .enumerate()
-        .map(|(slot, id)| (*id, slot))
-        .collect();
+    let group_slot: HashMap<usize, usize> =
+        group_ids.iter().enumerate().map(|(slot, id)| (*id, slot)).collect();
     let n_groups = group_ids.len();
 
     let rho = cfg.cross_event_correlation.clamp(0.0, 0.999);
@@ -263,10 +255,7 @@ pub fn parametric_var(
         cvar: cvar.max(0.0),
         expected_pnl: mean,
         worst: -portfolio.capital_at_risk(),
-        best: positions
-            .iter()
-            .map(|(p, _)| p.max_gain())
-            .sum(),
+        best: positions.iter().map(|(p, _)| p.max_gain()).sum(),
         prob_loss: f64::NAN,
         paths: 0,
     }
@@ -352,18 +341,10 @@ mod tests {
         // less than ten positions on one event.
         let (linked, m1) = portfolio_with(10, true);
         let (spread, m2) = portfolio_with(10, false);
-        let cfg = VarConfig {
-            cross_event_correlation: 0.0,
-            ..Default::default()
-        };
+        let cfg = VarConfig { cross_event_correlation: 0.0, ..Default::default() };
         let a = monte_carlo_var(&linked, &m1, &cfg);
         let b = monte_carlo_var(&spread, &m2, &cfg);
-        assert!(
-            b.var < a.var * 0.75,
-            "diversification did nothing: {} vs {}",
-            b.var,
-            a.var
-        );
+        assert!(b.var < a.var * 0.75, "diversification did nothing: {} vs {}", b.var, a.var);
     }
 
     #[test]
@@ -372,18 +353,12 @@ mod tests {
         let low = monte_carlo_var(
             &pf,
             &marks,
-            &VarConfig {
-                cross_event_correlation: 0.0,
-                ..Default::default()
-            },
+            &VarConfig { cross_event_correlation: 0.0, ..Default::default() },
         );
         let high = monte_carlo_var(
             &pf,
             &marks,
-            &VarConfig {
-                cross_event_correlation: 0.8,
-                ..Default::default()
-            },
+            &VarConfig { cross_event_correlation: 0.8, ..Default::default() },
         );
         assert!(
             high.var > low.var * 1.2,
@@ -432,22 +407,10 @@ mod tests {
     #[test]
     fn a_higher_confidence_demands_a_larger_var() {
         let (pf, marks) = portfolio_with(15, false);
-        let c95 = monte_carlo_var(
-            &pf,
-            &marks,
-            &VarConfig {
-                confidence: 0.95,
-                ..Default::default()
-            },
-        );
-        let c99 = monte_carlo_var(
-            &pf,
-            &marks,
-            &VarConfig {
-                confidence: 0.99,
-                ..Default::default()
-            },
-        );
+        let c95 =
+            monte_carlo_var(&pf, &marks, &VarConfig { confidence: 0.95, ..Default::default() });
+        let c99 =
+            monte_carlo_var(&pf, &marks, &VarConfig { confidence: 0.99, ..Default::default() });
         assert!(c99.var >= c95.var);
     }
 
@@ -500,14 +463,8 @@ mod tests {
         assert_eq!(at_95.var, 0.0, "the 5% quantile still profits");
         assert!(at_95.cvar > 0.0, "but the tail beyond it does not");
 
-        let at_99 = monte_carlo_var(
-            &pf,
-            &marks,
-            &VarConfig {
-                confidence: 0.99,
-                ..Default::default()
-            },
-        );
+        let at_99 =
+            monte_carlo_var(&pf, &marks, &VarConfig { confidence: 0.99, ..Default::default() });
         assert!(at_99.var > 90.0, "the losing band is a 96c-per-pair loss: {}", at_99.var);
         // The position is still fair on average.
         assert!(at_99.expected_pnl.abs() < 2.0, "expected pnl {}", at_99.expected_pnl);

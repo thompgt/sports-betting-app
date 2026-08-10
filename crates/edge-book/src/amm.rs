@@ -92,10 +92,7 @@ impl Lmsr {
         if n_outcomes < 2 {
             return Err(EdgeError::DegenerateMarket("LMSR needs at least two outcomes"));
         }
-        Ok(Lmsr {
-            b,
-            q: vec![0.0; n_outcomes],
-        })
+        Ok(Lmsr { b, q: vec![0.0; n_outcomes] })
     }
 
     /// Size the market by the subsidy you are willing to lose, which is the
@@ -197,9 +194,7 @@ impl MarketMaker for Lmsr {
         if !(inner.is_finite() && inner > 0.0) {
             // A sale large enough to drive the outcome's price to zero. There is
             // no finite share count that raises exactly this much collateral.
-            return Err(EdgeError::DegenerateMarket(
-                "budget is not achievable at any share count",
-            ));
+            return Err(EdgeError::DegenerateMarket("budget is not achievable at any share count"));
         }
         Ok(self.b * (m + inner.ln()) - self.q[outcome])
     }
@@ -267,10 +262,7 @@ impl Cpmm {
         if n_outcomes < 2 {
             return Err(EdgeError::DegenerateMarket("CPMM needs at least two outcomes"));
         }
-        Ok(Cpmm {
-            reserves: vec![funding; n_outcomes],
-            funding,
-        })
+        Ok(Cpmm { reserves: vec![funding; n_outcomes], funding })
     }
 
     /// Create with explicit reserves, for restoring a pool from on-chain state.
@@ -348,7 +340,11 @@ impl Cpmm {
         }
         for _ in 0..200 {
             let mid = 0.5 * (lo + hi);
-            if f(mid) > 0.0 { hi = mid } else { lo = mid }
+            if f(mid) > 0.0 {
+                hi = mid
+            } else {
+                lo = mid
+            }
             if (hi - lo).abs() < 1e-12 {
                 break;
             }
@@ -430,9 +426,7 @@ impl MarketMaker for Cpmm {
             }
         }
         if next.iter().any(|r| !r.is_finite() || *r <= 0.0) {
-            return Err(EdgeError::DegenerateMarket(
-                "trade would drain a reserve to zero",
-            ));
+            return Err(EdgeError::DegenerateMarket("trade would drain a reserve to zero"));
         }
         self.reserves = next;
 

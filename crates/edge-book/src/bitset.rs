@@ -21,11 +21,7 @@ const BITS: usize = 64;
 
 impl TickBitset {
     pub fn new(n_bits: usize) -> Self {
-        TickBitset {
-            words: vec![0; n_bits.div_ceil(BITS).max(1)],
-            n_bits,
-            count: 0,
-        }
+        TickBitset { words: vec![0; n_bits.div_ceil(BITS).max(1)], n_bits, count: 0 }
     }
 
     #[inline]

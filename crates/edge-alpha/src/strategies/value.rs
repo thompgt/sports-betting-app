@@ -93,11 +93,7 @@ pub struct ValueTaker {
 
 impl ValueTaker {
     pub fn new(id: StrategyId, cfg: ValueConfig) -> Self {
-        ValueTaker {
-            id,
-            cfg,
-            stats: StatsRecorder::default(),
-        }
+        ValueTaker { id, cfg, stats: StatsRecorder::default() }
     }
 
     pub fn config(&self) -> &ValueConfig {
@@ -150,7 +146,8 @@ impl ValueTaker {
         // Re-assess at the real size: on a per-order rounded fee schedule a
         // one-lot and a hundred-lot have materially different economics, and
         // the edge that justified the trade must survive at the size traded.
-        let sized = ev::assess(price, fair, a.side, Qty(qty), &view.spec.fee, Liquidity::Taker).ok()?;
+        let sized =
+            ev::assess(price, fair, a.side, Qty(qty), &view.spec.fee, Liquidity::Taker).ok()?;
         if sized.edge < self.cfg.min_edge || sized.ev_per_dollar < self.cfg.min_ev_per_dollar {
             return None;
         }
@@ -329,21 +326,14 @@ mod tests {
         let sim = Sim::quoted(45, 55);
         let t = ValueTaker::new(
             StrategyId(2),
-            ValueConfig {
-                min_edge: 0.02,
-                min_ev_per_dollar: 0.0,
-                ..Default::default()
-            },
+            ValueConfig { min_edge: 0.02, min_ev_per_dollar: 0.0, ..Default::default() },
         );
         // 58c fair against a 55c ask is 3c gross — real, but thin.
         assert!(t.evaluate(&sim.view(None, Some(p(0.58)))).is_some());
 
         // The same edge under a punitive fee schedule is not a trade.
         let mut dear = Sim::quoted(45, 55);
-        dear.spec.fee = edge_core::fees::FeeModel::Bps {
-            maker_bps: 0.0,
-            taker_bps: 400.0,
-        };
+        dear.spec.fee = edge_core::fees::FeeModel::Bps { maker_bps: 0.0, taker_bps: 400.0 };
         assert!(
             t.evaluate(&dear.view(None, Some(p(0.58)))).is_none(),
             "gross edge must not survive a fee that exceeds it"

@@ -117,8 +117,8 @@ impl Position {
         if current == 0 || (current > 0) == (signed > 0) {
             // Opening or adding: blend into the average.
             let total = current.abs() + size;
-            self.avg_cost =
-                (self.avg_cost * current.abs() as f64 + open_leg_price * size as f64) / total as f64;
+            self.avg_cost = (self.avg_cost * current.abs() as f64 + open_leg_price * size as f64)
+                / total as f64;
             self.qty = Qty(current + signed);
         } else {
             // Reducing, closing, or flipping through zero.
@@ -231,10 +231,7 @@ impl Portfolio {
         let (closed, opened) = if flipped {
             (before.abs(), after.abs())
         } else {
-            (
-                (before.abs() - after.abs()).max(0),
-                (after.abs() - before.abs()).max(0),
-            )
+            ((before.abs() - after.abs()).max(0), (after.abs() - before.abs()).max(0))
         };
         let open_leg_price = if side == Side::Buy { yes } else { 1.0 - yes };
         let close_leg_price = if before > 0 { yes } else { 1.0 - yes };
@@ -313,10 +310,7 @@ impl Portfolio {
 
     /// Signed exposure: positive when net long YES across the book.
     pub fn net_exposure(&self) -> f64 {
-        self.positions
-            .values()
-            .map(|p| p.qty.get() as f64 * p.avg_cost)
-            .sum()
+        self.positions.values().map(|p| p.qty.get() as f64 * p.avg_cost).sum()
     }
 
     /// Update the equity high-water mark. Call on every mark cycle.
@@ -412,7 +406,7 @@ mod tests {
         let realized = p.apply_fill(Side::Sell, Price::from_cents(55), Qty(60), 0.0);
         approx(realized, 9.0); // 60 contracts x 15c
         assert_eq!(p.qty, Qty(40));
-        approx(p.avg_cost, 0.40, );
+        approx(p.avg_cost, 0.40);
         approx(p.realized, 9.0);
     }
 
@@ -435,7 +429,7 @@ mod tests {
         let realized = p.apply_fill(Side::Sell, Price::from_cents(50), Qty(150), 0.0);
         approx(realized, 10.0);
         assert_eq!(p.qty, Qty(-50));
-        approx(p.avg_cost, 0.50, ); // the NO leg at 1 - 0.50
+        approx(p.avg_cost, 0.50); // the NO leg at 1 - 0.50
         approx(p.capital_at_risk(), 25.0);
     }
 
@@ -597,7 +591,7 @@ mod tests {
         pf.mark(&down);
         // Equity 900 against a 1200 peak.
         approx(pf.drawdown(&down), 0.25);
-        approx(pf.peak_equity(), 1_200.0, );
+        approx(pf.peak_equity(), 1_200.0);
     }
 
     #[test]

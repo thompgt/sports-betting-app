@@ -152,7 +152,9 @@ impl MarketView<'_> {
     /// strategy before anything else, because quoting a halted or closed market
     /// is a pure source of rejections.
     pub fn is_tradable(&self) -> bool {
-        self.spec.status == MarketStatus::Open && self.book.best_bid().is_some() && self.book.best_ask().is_some()
+        self.spec.status == MarketStatus::Open
+            && self.book.best_bid().is_some()
+            && self.book.best_ask().is_some()
     }
 
     /// Seconds until resolution, or infinity where none is scheduled.
@@ -210,15 +212,14 @@ pub struct OrderIntent {
 }
 
 impl OrderIntent {
-    pub fn new(market: MarketId, side: Side, price: Price, qty: Qty, reason: impl Into<Reason>) -> Self {
-        OrderIntent {
-            market,
-            side,
-            price,
-            qty,
-            tif: TimeInForce::Gtc,
-            reason: reason.into(),
-        }
+    pub fn new(
+        market: MarketId,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        reason: impl Into<Reason>,
+    ) -> Self {
+        OrderIntent { market, side, price, qty, tif: TimeInForce::Gtc, reason: reason.into() }
     }
 
     pub fn with_tif(mut self, tif: TimeInForce) -> Self {
@@ -229,13 +230,25 @@ impl OrderIntent {
     /// A quote: post-only, so it either makes liquidity or is rejected. A market
     /// maker that accidentally crosses pays the taker fee and inherits the
     /// adverse selection it was being paid to avoid.
-    pub fn quote(market: MarketId, side: Side, price: Price, qty: Qty, reason: impl Into<Reason>) -> Self {
+    pub fn quote(
+        market: MarketId,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        reason: impl Into<Reason>,
+    ) -> Self {
         Self::new(market, side, price, qty, reason).with_tif(TimeInForce::PostOnly)
     }
 
     /// A taking order: immediate-or-cancel, so an edge that has already
     /// disappeared does not leave a resting order behind at a stale price.
-    pub fn take(market: MarketId, side: Side, price: Price, qty: Qty, reason: impl Into<Reason>) -> Self {
+    pub fn take(
+        market: MarketId,
+        side: Side,
+        price: Price,
+        qty: Qty,
+        reason: impl Into<Reason>,
+    ) -> Self {
         Self::new(market, side, price, qty, reason).with_tif(TimeInForce::Ioc)
     }
 
@@ -290,11 +303,7 @@ pub struct StrategyStats {
 
 impl StrategyStats {
     pub fn maker_share(&self) -> f64 {
-        if self.fills == 0 {
-            0.0
-        } else {
-            self.maker_fills as f64 / self.fills as f64
-        }
+        if self.fills == 0 { 0.0 } else { self.maker_fills as f64 / self.fills as f64 }
     }
 }
 
@@ -436,7 +445,11 @@ pub(crate) mod harness {
             s
         }
 
-        pub fn view<'a>(&'a self, prediction: Option<&'a Prediction>, consensus: Option<Prob>) -> MarketView<'a> {
+        pub fn view<'a>(
+            &'a self,
+            prediction: Option<&'a Prediction>,
+            consensus: Option<Prob>,
+        ) -> MarketView<'a> {
             MarketView {
                 spec: &self.spec,
                 book: &self.book,
@@ -508,11 +521,7 @@ mod tests {
         let v = sim.view(Some(&echo), Some(Prob::new(0.55).unwrap()));
         assert_eq!(v.fair().unwrap().get(), 0.55);
 
-        let earned = Prediction {
-            weight: 0.4,
-            fair: Prob::new(0.48).unwrap(),
-            ..echo
-        };
+        let earned = Prediction { weight: 0.4, fair: Prob::new(0.48).unwrap(), ..echo };
         let v = sim.view(Some(&earned), Some(Prob::new(0.55).unwrap()));
         assert_eq!(v.fair().unwrap().get(), 0.48);
     }
@@ -597,10 +606,7 @@ mod tests {
         let mut r = StatsRecorder::default();
         r.record(&[
             Action::Place(OrderIntent::new(M, Side::Buy, Price::from_cents(40), Qty(5), "x")),
-            Action::Cancel {
-                order_id: OrderId(1),
-                reason: "y".into(),
-            },
+            Action::Cancel { order_id: OrderId(1), reason: "y".into() },
         ]);
         assert_eq!(r.stats().intents, 1);
         assert_eq!(r.stats().cancels, 1);
@@ -627,7 +633,8 @@ mod tests {
 
     #[test]
     fn actions_serialise_with_their_reason_intact() {
-        let a = Action::Place(OrderIntent::quote(M, Side::Buy, Price::from_cents(40), Qty(5), "skew"));
+        let a =
+            Action::Place(OrderIntent::quote(M, Side::Buy, Price::from_cents(40), Qty(5), "skew"));
         let s = serde_json::to_string(&a).unwrap();
         assert!(s.contains("skew"), "{s}");
         let back: Action = serde_json::from_str(&s).unwrap();

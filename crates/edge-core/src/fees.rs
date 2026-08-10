@@ -53,10 +53,7 @@ impl FeeModel {
     ///
     /// Fee schedules change; this is a default, not a guarantee. The live
     /// adapter should override it from venue configuration.
-    pub const KALSHI_STANDARD: FeeModel = FeeModel::Kalshi {
-        taker_rate: 0.07,
-        maker_rate: 0.0,
-    };
+    pub const KALSHI_STANDARD: FeeModel = FeeModel::Kalshi { taker_rate: 0.07, maker_rate: 0.0 };
 
     /// Fee charged to execute `qty` contracts at `price`, in micro-dollars.
     /// Always non-negative.
@@ -70,10 +67,7 @@ impl FeeModel {
         match *self {
             FeeModel::None | FeeModel::WinningsOnly { .. } => Notional::ZERO,
 
-            FeeModel::Kalshi {
-                taker_rate,
-                maker_rate,
-            } => {
+            FeeModel::Kalshi { taker_rate, maker_rate } => {
                 let rate = match liquidity {
                     Liquidity::Maker => maker_rate,
                     Liquidity::Taker => taker_rate,
@@ -91,10 +85,7 @@ impl FeeModel {
                 Notional((cents * 10_000.0) as i64)
             }
 
-            FeeModel::Bps {
-                maker_bps,
-                taker_bps,
-            } => {
+            FeeModel::Bps { maker_bps, taker_bps } => {
                 let bps = match liquidity {
                     Liquidity::Maker => maker_bps,
                     Liquidity::Taker => taker_bps,
@@ -146,10 +137,7 @@ mod tests {
     #[test]
     fn no_fee_model_is_free() {
         let f = FeeModel::None;
-        assert_eq!(
-            f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Taker),
-            Notional::ZERO
-        );
+        assert_eq!(f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Taker), Notional::ZERO);
     }
 
     #[test]
@@ -173,10 +161,7 @@ mod tests {
     #[test]
     fn kalshi_makers_pay_nothing_by_default() {
         let f = FeeModel::KALSHI_STANDARD;
-        assert_eq!(
-            f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Maker),
-            Notional::ZERO
-        );
+        assert_eq!(f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Maker), Notional::ZERO);
     }
 
     #[test]
@@ -202,10 +187,7 @@ mod tests {
     #[test]
     fn winnings_fee_is_charged_at_settlement_not_on_the_trade() {
         let f = FeeModel::WinningsOnly { rate: 0.02 };
-        assert_eq!(
-            f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Taker),
-            Notional::ZERO
-        );
+        assert_eq!(f.trade_fee(Price::from_cents(50), Qty(100), Liquidity::Taker), Notional::ZERO);
         assert!((f.settlement_fee(Notional::from_dollars(100.0)).dollars() - 2.0).abs() < 1e-9);
         // A loss is not taxed.
         assert_eq!(f.settlement_fee(Notional::from_dollars(-50.0)), Notional::ZERO);
