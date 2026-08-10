@@ -31,9 +31,11 @@ use edge_core::market::MarketStatus;
 use edge_core::types::{Leg, Price, Qty, Ts, VenueId};
 use serde::Deserialize;
 
+use crate::backoff::RetryPolicy;
 use crate::error::{DataError, Result};
 use crate::http::{Transport, decode};
-use crate::source::{BookSnapshot, Level, Listing, MarketSource, VenueUpdate};
+use crate::limiter::RateLimiter;
+use crate::source::{BookSnapshot, Guard, Level, Listing, MarketSource, VenueUpdate, now};
 use crate::time::parse_rfc3339;
 
 pub const VENUE: &str = "kalshi";
@@ -200,11 +202,24 @@ pub fn decode_listing(m: &RawMarket) -> Result<Listing> {
 // Adapter
 // ---------------------------------------------------------------------------
 
+/// Kalshi's published read quota for the basic access tier, as tokens per
+/// second with a second's worth of burst.
+///
+/// Deliberately a little under the documented ceiling. The limiter meters our
+/// own sends and cannot see requests already in flight, retries scheduled by
+/// the guard, or another process against the same key, so budgeting to the
+/// exact published number is how a client discovers the venue's enforcement
+/// rather than its own.
+const READS_PER_SECOND: f64 = 9.0;
+
 /// Kalshi market data over REST.
 #[derive(Debug)]
 pub struct Kalshi<T: Transport> {
     venue: VenueId,
     transport: T,
+    /// Rate limiting, retry and circuit breaking. Every request goes through
+    /// this; see [`Kalshi::get`].
+    guard: Guard,
     /// Series to fetch, e.g. `KXNBAGAME`. Empty means everything open, which
     /// is thousands of markets and rarely what anyone wants.
     series: Vec<String>,
@@ -212,14 +227,52 @@ pub struct Kalshi<T: Transport> {
 }
 
 impl<T: Transport> Kalshi<T> {
+    /// An adapter with the venue's own quota already applied.
+    ///
+    /// There is deliberately no way to build one without a [`Guard`]. Handing
+    /// the caller that choice reads as flexibility and is really an invitation
+    /// to poll a live venue flat out on the first deployment that forgets — and
+    /// the resilience layer only earns its keep if nothing can route around it.
+    /// A caller with a different quota overrides it with [`Kalshi::with_guard`].
     pub fn new(venue: VenueId, transport: T) -> Self {
-        Kalshi { venue, transport, series: Vec::new(), page_size: 200 }
+        Kalshi {
+            venue,
+            transport,
+            guard: Guard::new(
+                VENUE,
+                RateLimiter::per_second(READS_PER_SECOND, now()),
+                RetryPolicy::default(),
+            ),
+            series: Vec::new(),
+            page_size: 200,
+        }
+    }
+
+    /// Replace the default quota and retry schedule — for a higher access tier,
+    /// or to share one budget across several adapters against the same key.
+    pub fn with_guard(mut self, guard: Guard) -> Self {
+        self.guard = guard;
+        self
     }
 
     /// Restrict the catalogue to these series tickers.
     pub fn with_series(mut self, series: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.series = series.into_iter().map(Into::into).collect();
         self
+    }
+
+    /// Whether the venue is currently believed reachable, for health endpoints.
+    pub fn is_healthy(&self) -> bool {
+        self.guard.is_healthy()
+    }
+
+    /// The one place this adapter touches the network.
+    ///
+    /// Every request is metered, retried and circuit-broken here rather than at
+    /// each call site, so a new endpoint cannot be added unguarded by accident.
+    /// `GET` is idempotent, which is what makes the guard's retry safe.
+    async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Vec<u8>> {
+        self.guard.call(|| self.transport.get(path, query)).await
     }
 
     async fn markets_page(
@@ -235,7 +288,7 @@ impl<T: Transport> Kalshi<T> {
         if let Some(c) = cursor {
             query.push(("cursor", c.to_string()));
         }
-        let body = self.transport.get("/markets", &query).await?;
+        let body = self.get("/markets", &query).await?;
         decode(VENUE, "markets", &body)
     }
 
@@ -258,12 +311,10 @@ impl<T: Transport> Kalshi<T> {
     }
 
     pub async fn book(&self, ticker: &str) -> Result<BookSnapshot> {
-        let body = self
-            .transport
-            .get(&format!("/markets/{ticker}/orderbook"), &[("depth", "25".into())])
-            .await?;
+        let body =
+            self.get(&format!("/markets/{ticker}/orderbook"), &[("depth", "25".into())]).await?;
         let resp: OrderbookResponse = decode(VENUE, "orderbook", &body)?;
-        Ok(decode_book(&resp.orderbook, crate::source::now()))
+        Ok(decode_book(&resp.orderbook, now()))
     }
 }
 
@@ -336,8 +387,23 @@ mod tests {
         "no":  [[51, 80],  [50, 120], [49, 300]]
     }}"#;
 
+    /// An adapter whose guard imposes no quota and retries fast, so the
+    /// translation tests are about translation rather than about sleeping.
     fn kalshi(t: MockTransport) -> Kalshi<MockTransport> {
-        Kalshi::new(V, t)
+        Kalshi::new(V, t).with_guard(Guard::new(
+            VENUE,
+            RateLimiter::unlimited(),
+            RetryPolicy {
+                max_attempts: 3,
+                budget: None,
+                backoff: crate::backoff::Backoff {
+                    initial: std::time::Duration::from_millis(1),
+                    max: std::time::Duration::from_millis(1),
+                    multiplier: 1.0,
+                    jitter: crate::backoff::Jitter::None,
+                },
+            },
+        ))
     }
 
     #[test]
@@ -500,7 +566,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_transient_failure_on_one_book_is_propagated_for_the_guard_to_retry() {
+    async fn a_transient_failure_is_retried_by_the_guard_before_it_is_propagated() {
         let t = MockTransport::new().with("markets/A/orderbook", BOOK.as_bytes().to_vec()).failing(
             "markets/B/orderbook",
             DataError::Http { venue: VENUE.into(), status: 503, detail: String::new() },
@@ -508,6 +574,62 @@ mod tests {
         let k = kalshi(t);
         let err = k.snapshot(&["A".into(), "B".into()]).await.unwrap_err();
         assert!(err.is_transient());
+        // Three attempts at B, not one. The retry belongs to the guard: the
+        // whole point of routing through it is that the adapter never has to
+        // know that a 503 is worth asking again.
+        let b = k.transport.calls().iter().filter(|c| c.contains("B/orderbook")).count();
+        assert_eq!(b, 3, "a 503 must be retried, not surfaced on the first attempt");
+    }
+
+    #[tokio::test]
+    async fn the_adapter_cannot_be_built_without_a_quota() {
+        // The default constructor applies Kalshi's own read limit, so a
+        // deployment that configures nothing still meters itself rather than
+        // polling the venue flat out.
+        //
+        // Throttling shows up as elapsed time rather than as failures: a
+        // client-side throttle is transient, so the guard waits and sends
+        // rather than dropping the request. The burst allowance is served
+        // immediately and everything past it has to wait for tokens.
+        let t = MockTransport::new().with("markets/A/orderbook", BOOK.as_bytes().to_vec());
+        let k = Kalshi::new(V, t);
+        let tickers: Vec<String> = std::iter::repeat_n("A".to_string(), 20).collect();
+
+        let started = std::time::Instant::now();
+        let out = k.snapshot(&tickers).await.unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(out.len(), tickers.len(), "throttling delays requests, it does not drop them");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(250),
+            "20 requests against a {READS_PER_SECOND}/s quota went out in {elapsed:?} — \
+             nothing is metering them"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dead_venue_stops_being_polled_rather_than_being_hammered() {
+        // Once the breaker opens the adapter must stop issuing requests at all,
+        // which is only true if the breaker is genuinely in the request path.
+        let t = MockTransport::new().failing(
+            "markets/A/orderbook",
+            DataError::Http { venue: VENUE.into(), status: 500, detail: String::new() },
+        );
+        let k = Kalshi::new(V, t).with_guard(Guard::with_breaker(
+            VENUE,
+            RateLimiter::unlimited(),
+            RetryPolicy::none(),
+            crate::breaker::BreakerConfig { consecutive_failures: 3, ..Default::default() },
+        ));
+        for _ in 0..20 {
+            let _ = k.book("A").await;
+        }
+        assert!(!k.is_healthy(), "twenty consecutive 500s is a dead venue");
+        assert!(
+            k.transport.calls().len() <= 5,
+            "an open circuit must cost nothing: {} requests went out",
+            k.transport.calls().len()
+        );
     }
 
     #[tokio::test]
