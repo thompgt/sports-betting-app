@@ -105,6 +105,10 @@ pub struct Listing {
     /// The canonical event key from [`crate::resolve`]. Markets sharing this
     /// are the same bet, and this is the only thing tying venues together.
     pub event_key: String,
+    /// Which outcome of that event this contract pays on, canonical across
+    /// venues. `None` means the adapter cannot say, in which case the ticker is
+    /// used - two venues then never pair, which is the safe direction to fail.
+    pub outcome_key: Option<String>,
     pub leg: Leg,
     pub tick_size: i64,
     pub min_qty: Qty,
@@ -122,6 +126,7 @@ impl Listing {
             title: ticker.clone(),
             ticker,
             event_key: event_key.into(),
+            outcome_key: None,
             leg: Leg::Yes,
             tick_size: 10_000,
             min_qty: Qty(1),
@@ -140,6 +145,10 @@ impl Listing {
             venue,
             ticker: self.ticker.clone(),
             title: self.title.clone(),
+            outcome: self
+                .outcome_key
+                .clone()
+                .unwrap_or_else(|| self.ticker.clone()),
             leg: self.leg,
             tick_size: self.tick_size,
             min_qty: self.min_qty,

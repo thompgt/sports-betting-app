@@ -180,6 +180,9 @@ pub fn decode_listing(m: &RawMarket) -> Result<Listing> {
         ticker: m.ticker.clone(),
         title: if m.title.is_empty() { m.ticker.clone() } else { m.title.clone() },
         event_key,
+        // A Kalshi ticker already names one outcome of its event (an event
+        // ticker plus the outcome suffix), so it is the canonical outcome key.
+        outcome_key: Some(m.ticker.clone()),
         // Kalshi markets are quoted from the YES side; the NO side of the same
         // contract is the same market seen through the reflection above, not a
         // separate listing.

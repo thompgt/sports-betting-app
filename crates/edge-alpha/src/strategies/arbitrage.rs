@@ -217,11 +217,18 @@ impl Arbitrage {
     /// Returns `None` unless the selection is genuinely exhaustive — a partial
     /// cover is not an arbitrage, it is a directional position that happens to
     /// look cheap.
+    ///
+    /// The unit of exhaustiveness is the **outcome**, not the event. Pairing the
+    /// cheapest YES anywhere on an event against the cheapest NO anywhere is
+    /// only sound when the event has a single outcome: on a three-way event
+    /// YES("A wins") and NO("B wins") both lose when C wins, so the pair pays
+    /// $0 and the "arbitrage" is a phantom. Both legs must therefore agree on
+    /// `spec.outcome`.
     fn cover_set<'a>(&self, event: &'a EventView<'a>) -> Option<Vec<&'a MarketView<'a>>> {
-        let cheapest = |leg: Leg| -> Option<&'a MarketView<'a>> {
+        let cheapest = |leg: Leg, outcome: &str| -> Option<&'a MarketView<'a>> {
             event
                 .leg(leg)
-                .filter(|m| m.book.best_ask().is_some())
+                .filter(|m| m.spec.outcome == outcome && m.book.best_ask().is_some())
                 .min_by(|a, b| {
                     let x = a.book.best_ask().unwrap().micros();
                     let y = b.book.best_ask().unwrap().micros();
@@ -229,17 +236,46 @@ impl Arbitrage {
                 })
         };
 
-        // Binary: cheapest YES anywhere against cheapest NO anywhere. This is
-        // where cross-venue arbitrage falls out — the two legs need not be, and
-        // usually are not, on the same venue.
-        if let (Some(yes), Some(no)) = (cheapest(Leg::Yes), cheapest(Leg::No)) {
-            return Some(vec![yes, no]);
+        // Distinct outcomes on this event, in first-seen order so the choice is
+        // deterministic.
+        let mut outcomes: Vec<&str> = Vec::new();
+        for m in event.markets {
+            if !outcomes.contains(&m.spec.outcome.as_str()) {
+                outcomes.push(&m.spec.outcome);
+            }
         }
 
-        // Multi-outcome: every market is a distinct outcome and they must all
-        // be present. Fewer than two legs cannot cover anything.
-        if event.markets.len() >= 2 && event.markets.iter().all(|m| m.spec.leg == Leg::Yes) {
-            return Some(event.markets.iter().collect());
+        // Complement: YES and NO on the SAME outcome. The two legs need not be,
+        // and usually are not, on the same venue — that is where cross-venue
+        // arbitrage falls out. Take whichever outcome gives the cheapest pair.
+        let mut best: Option<(i64, Vec<&'a MarketView<'a>>)> = None;
+        for outcome in &outcomes {
+            if let (Some(yes), Some(no)) = (cheapest(Leg::Yes, outcome), cheapest(Leg::No, outcome))
+            {
+                let cost =
+                    yes.book.best_ask().unwrap().micros() + no.book.best_ask().unwrap().micros();
+                if best.as_ref().is_none_or(|(b, _)| cost < *b) {
+                    best = Some((cost, vec![yes, no]));
+                }
+            }
+        }
+        if let Some((_, legs)) = best {
+            return Some(legs);
+        }
+
+        // Multi-outcome: one YES per distinct outcome, every outcome present.
+        // Fewer than two outcomes cannot cover anything. Note this takes the
+        // cheapest quote per outcome rather than every market on the event —
+        // two venues listing the same outcome are one leg, not two, and
+        // counting both inflates the cost of a real cover into a miss.
+        if outcomes.len() >= 2 && event.markets.iter().all(|m| m.spec.leg == Leg::Yes) {
+            let legs: Vec<_> = outcomes
+                .iter()
+                .filter_map(|o| cheapest(Leg::Yes, o))
+                .collect();
+            if legs.len() == outcomes.len() {
+                return Some(legs);
+            }
         }
         None
     }
@@ -299,10 +335,26 @@ mod tests {
     }
 
     impl Venue {
+        /// A market on the event's single default outcome. Venues differ, the
+        /// outcome does not — which is what makes a YES here and a NO there
+        /// genuine complements.
         fn new(id: u64, venue: u16, leg: Leg, ask: i64, depth: i64) -> Self {
+            Self::with_outcome(id, venue, leg, ask, depth, "OUTCOME")
+        }
+
+        /// A market on a named outcome, for events with more than one.
+        fn with_outcome(
+            id: u64,
+            venue: u16,
+            leg: Leg,
+            ask: i64,
+            depth: i64,
+            outcome: &str,
+        ) -> Self {
             let market = MarketId(id);
             let mut sim = Sim::for_market(market, EVENT, VenueId(venue));
             sim.spec.ticker = format!("M{id}");
+            sim.spec.outcome = outcome.to_string();
             sim.spec.leg = leg;
             // A bid too, so the market counts as tradable.
             sim.rest(Side::Buy, (ask - 3).max(1), 100);
@@ -434,13 +486,61 @@ mod tests {
     #[test]
     fn a_three_way_market_priced_below_a_dollar_is_taken_on_every_leg() {
         let v = [
-            Venue::new(1, 1, Leg::Yes, 30, 200),
-            Venue::new(2, 1, Leg::Yes, 33, 200),
-            Venue::new(3, 1, Leg::Yes, 34, 200),
+            Venue::with_outcome(1, 1, Leg::Yes, 30, 200, "A"),
+            Venue::with_outcome(2, 1, Leg::Yes, 33, 200, "B"),
+            Venue::with_outcome(3, 1, Leg::Yes, 34, 200, "C"),
         ];
         let opp = scan(&v, ArbConfig::default()).expect("97c across three outcomes");
         assert_eq!(opp.legs.len(), 3);
         assert!((opp.profit_per_set - 0.03).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_yes_and_a_no_on_different_outcomes_are_not_an_arbitrage() {
+        // The phantom. YES("A wins") at 30c and NO("B wins") at 40c sum to 70c
+        // and look like 30c of free money, but both legs lose when C wins, so
+        // the pair pays $0. Only legs on the SAME outcome are complements.
+        let v = [
+            Venue::with_outcome(1, 1, Leg::Yes, 30, 200, "A"),
+            Venue::with_outcome(2, 2, Leg::No, 40, 200, "B"),
+            Venue::with_outcome(3, 3, Leg::Yes, 35, 200, "C"),
+        ];
+        assert!(
+            scan(&v, ArbConfig::default()).is_none(),
+            "YES(A) + NO(B) on a three-way event is not a cover"
+        );
+    }
+
+    #[test]
+    fn a_no_leg_does_not_hide_a_genuine_multi_outcome_cover() {
+        // Same three-way event, but NO(B) is cheap enough that YES(B) + NO(B)
+        // is a real complement pair. That is the arbitrage, not the phantom.
+        let v = [
+            Venue::with_outcome(1, 1, Leg::Yes, 30, 200, "A"),
+            Venue::with_outcome(2, 2, Leg::Yes, 33, 200, "B"),
+            Venue::with_outcome(3, 3, Leg::No, 62, 200, "B"),
+        ];
+        let opp = scan(&v, ArbConfig::default()).expect("33c + 62c = 95c on outcome B");
+        assert_eq!(opp.legs.len(), 2);
+        assert!(opp.legs.iter().all(|l| l.market != MarketId(1)));
+        assert!((opp.profit_per_set - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_venues_quoting_the_same_outcome_are_one_leg_not_two() {
+        // A three-way cover where outcome A is listed on two venues. Counting
+        // both would total 30 + 31 + 33 + 34 = $1.28 and miss a real 97c cover.
+        let v = [
+            Venue::with_outcome(1, 1, Leg::Yes, 30, 200, "A"),
+            Venue::with_outcome(2, 2, Leg::Yes, 31, 200, "A"),
+            Venue::with_outcome(3, 1, Leg::Yes, 33, 200, "B"),
+            Venue::with_outcome(4, 1, Leg::Yes, 34, 200, "C"),
+        ];
+        let opp = scan(&v, ArbConfig::default()).expect("97c across three outcomes");
+        assert_eq!(opp.legs.len(), 3);
+        // The cheaper of the two A listings is the one taken.
+        assert!(opp.legs.iter().any(|l| l.market == MarketId(1)));
+        assert!(opp.legs.iter().all(|l| l.market != MarketId(2)));
     }
 
     #[test]
