@@ -33,7 +33,7 @@ The Rust rebuild exists because detection is where a scanner stops and a trading
 **Quantitative / numerical**
 
 - Four devigging models — multiplicative, **power method** (`Σ p_i^k = 1`), **Shin** (solving for the implied insider fraction `z`), and additive — with bracketed solvers in Rust that cannot diverge, and a Newton–Raphson implementation in Python.
-- **Log-odds (logit) pooling** of multiple venues into one fair value, devigging each source *before* pooling, and returning pool dispersion as a first-class output.
+- **Log-odds (logit) pooling** of multiple venues into one fair value, devigging each source *before* pooling — in both the Rust consensus and the Python service — and returning pool dispersion as a first-class output.
 - **Fractional Kelly sizing shrunk for estimation error**, fed by that dispersion, with a hard cap on any single position.
 - **Monte Carlo VaR/CVaR** over Bernoulli resolution outcomes with shared latent draws for same-event markets and a common factor across events — because a normal approximation describes a different distribution than a binary payoff and thins exactly the tail it is meant to measure.
 - Streaming estimators built for a hot path: Welford variance, EWMA, rolling windows, Brier/log scoring rules.
@@ -167,7 +167,7 @@ flowchart TD
 
     subgraph engine["Quantitative engine"]
         R["EntityResolver<br/><i>exact hash → fuzzy token-sort</i>"]
-        D["No-Vig Power Method devig<br/><i>solve sum p_i^k = 1</i>"]
+        D["Per-book devig, then log-odds pool<br/><i>solve sum p_i^k = 1 per book,<br/>pool fair probs in logit space</i>"]
         E["EV + Kelly<br/><i>vs. cross-book consensus</i>"]
         R --> D --> E
     end
@@ -204,7 +204,7 @@ Full write-up in [`docs/architecture.md`](docs/architecture.md); the rendered PN
 1. **Start up.** `app/main.py` loads `Settings` (env-prefixed `LINEEDGE_*`), configures rotating-file logging, opens the database, seeds canonical teams and games from `app/ingestion/seed_data/canonical_entities.json` if the tables are empty, and loads them into an `EntityResolver`.
 2. **Poll.** `EdgeDetectionService.run_forever()` calls `poll_once()` on an interval. The only provider implementation, `MockOddsClient`, reads a JSON odds fixture; `OddsProvider` is the swap point where a live feed would go. An exception during a cycle triggers capped exponential backoff instead of crashing the process.
 3. **Resolve.** Feed names are mapped onto canonical entities: exact hash lookup first, RapidFuzz `token_sort_ratio` fallback second, so `"NY Rangers"`, `"Rangers"` and `"New York Rangers"` collapse to one UUID. Game resolution additionally requires the start time to fall within a 6-hour window, so the same fixture three days later does not false-positive.
-4. **Price.** Each book's American odds become decimal odds, then implied probabilities. Implied probabilities are averaged across every book quoting the market to form a consensus, and that consensus is devigged with the power method — solving `Σ p_i^k = 1` by Newton–Raphson — to get fair probabilities.
+4. **Price.** Each book's American odds become decimal odds, then implied probabilities. **Each book is devigged on its own** with the power method — solving `Σ p_i^k = 1` by Newton–Raphson — against its own overround, and only then are the resulting fair probabilities **pooled across books in log-odds space** and renormalised onto the simplex. The order matters: averaging vigged probabilities first and devigging the average strips a margin no book actually quoted, so one fat-margin book drags every other book's fair price with it. This mirrors `consensus()` in `crates/edge-core/src/consensus.rs`.
 5. **Detect.** Each individual book's price is judged against the consensus fair line:
 
    ```
@@ -322,7 +322,8 @@ python -c "import nbformat, nbclient; nb = nbformat.read('notebooks/demo.ipynb',
 
 | File | Covers |
 |---|---|
-| `tests/test_math_utils.py` | Odds conversion, implied probability, power-method devig convergence, EV, Kelly |
+| `tests/test_math_utils.py` | Odds conversion, implied probability, power-method devig convergence, log-odds pooling, EV, Kelly |
+| `tests/test_detection_service.py` | Consensus construction: devig-before-pool ordering, outcome-keyed (not positional) alignment, mismatched outcome sets |
 | `tests/test_resolver.py` | Exact and fuzzy team matching, alias handling, game resolution and the 6-hour window |
 | `tests/test_ingestion.py` | Provider interface, fixture parsing, pydantic validation of odds payloads |
 | `tests/test_storage.py` | Edge persistence, `EdgeAuditor` closeout, CLV sign, per-outcome closeout scoping |
