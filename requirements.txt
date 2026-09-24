@@ -8,7 +8,9 @@
 # --- Core service -----------------------------------------------------------
 pydantic==2.12.4            # app/models/schemas: odds payload validation
 pydantic-settings==2.11.0   # app/core/config: LINEEDGE_* env-driven Settings
-SQLAlchemy==2.0.44          # app/storage: Mapped[] declarative ORM over SQLite
+SQLAlchemy==2.0.44          # app/storage: Mapped[] declarative ORM over SQLite and MySQL
+pymysql>=1.1.0              # MySQL DBAPI driver
+cryptography>=42.0.0        # MySQL caching_sha2_password authentication
 RapidFuzz==3.14.3           # app/engine/resolver: token_sort_ratio entity matching
 
 # --- Dashboard --------------------------------------------------------------
