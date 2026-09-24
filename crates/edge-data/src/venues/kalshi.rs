@@ -75,9 +75,24 @@ pub struct RawMarket {
     pub result: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct OrderbookResponse {
-    pub orderbook: RawOrderbook,
+    #[serde(default)]
+    pub orderbook: Option<RawOrderbook>,
+    #[serde(default)]
+    pub orderbook_fp: Option<RawOrderbookFp>,
+}
+
+impl OrderbookResponse {
+    pub fn to_raw(&self) -> RawOrderbook {
+        if let Some(ref ob) = self.orderbook {
+            ob.clone()
+        } else if let Some(ref fp) = self.orderbook_fp {
+            fp.to_raw_orderbook()
+        } else {
+            RawOrderbook::default()
+        }
+    }
 }
 
 /// Both stacks are bids: `yes` bids for YES, `no` bids for NO. Each entry is
@@ -88,6 +103,37 @@ pub struct RawOrderbook {
     pub yes: Option<Vec<[i64; 2]>>,
     #[serde(default)]
     pub no: Option<Vec<[i64; 2]>>,
+}
+
+/// Modern API v2 `orderbook_fp` with string-encoded dollar values.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RawOrderbookFp {
+    #[serde(default)]
+    pub yes_dollars: Option<Vec<[String; 2]>>,
+    #[serde(default)]
+    pub no_dollars: Option<Vec<[String; 2]>>,
+}
+
+impl RawOrderbookFp {
+    pub fn to_raw_orderbook(&self) -> RawOrderbook {
+        let parse_side = |levels: &Option<Vec<[String; 2]>>| -> Option<Vec<[i64; 2]>> {
+            levels.as_ref().map(|list| {
+                list.iter()
+                    .filter_map(|[p_str, q_str]| {
+                        let p = p_str.parse::<f64>().ok()?;
+                        let q = q_str.parse::<f64>().ok()?;
+                        let cents = (p * 100.0).round() as i64;
+                        let qty = q.round() as i64;
+                        Some([cents, qty])
+                    })
+                    .collect()
+            })
+        };
+        RawOrderbook {
+            yes: parse_side(&self.yes_dollars),
+            no: parse_side(&self.no_dollars),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +410,7 @@ impl<T: Transport> Kalshi<T> {
         let body =
             self.get(&format!("/markets/{ticker}/orderbook"), &[("depth", "25".into())]).await?;
         let resp: OrderbookResponse = decode(VENUE, "orderbook", &body)?;
-        Ok(decode_book(&resp.orderbook, ts))
+        Ok(decode_book(&resp.to_raw(), ts))
     }
 }
 
@@ -503,7 +549,7 @@ mod tests {
     #[test]
     fn the_two_bid_stacks_become_one_two_sided_book() {
         let raw: OrderbookResponse = serde_json::from_str(BOOK).unwrap();
-        let book = decode_book(&raw.orderbook, Ts::from_secs(1));
+        let book = decode_book(&raw.to_raw(), Ts::from_secs(1));
 
         assert_eq!(book.best_bid(), Some(Price::from_cents(45)));
         // The tightest NO bid is 51c, which is the *cheapest* YES offer at 49c.
@@ -514,12 +560,29 @@ mod tests {
     }
 
     #[test]
+    fn the_orderbook_fp_format_decodes_identically() {
+        let json = r#"{"orderbook_fp": {
+            "yes_dollars": [["0.4500", "100.00"], ["0.4400", "250.00"], ["0.4300", "500.00"]],
+            "no_dollars":  [["0.5100", "80.00"],  ["0.5000", "120.00"], ["0.4900", "300.00"]]
+        }}"#;
+        let raw: OrderbookResponse = serde_json::from_str(json).unwrap();
+        let book = decode_book(&raw.to_raw(), Ts::from_secs(1));
+
+        assert_eq!(book.best_bid(), Some(Price::from_cents(45)));
+        assert_eq!(book.best_ask(), Some(Price::from_cents(49)));
+        assert_eq!(book.bids.len(), 3);
+        assert_eq!(book.asks.len(), 3);
+        assert_eq!(book.bids[0].qty, Qty(100));
+        assert_eq!(book.asks[0].qty, Qty(80));
+    }
+
+    #[test]
     fn the_ask_stack_is_ordered_by_the_reflected_price_not_the_published_one() {
         // Kalshi's NO stack descends by NO price, which ascends by YES price
         // only after reflection. Sorting the raw numbers would put the *worst*
         // offer at the touch.
         let raw: OrderbookResponse = serde_json::from_str(BOOK).unwrap();
-        let book = decode_book(&raw.orderbook, Ts::ZERO);
+        let book = decode_book(&raw.to_raw(), Ts::ZERO);
         let asks: Vec<i64> = book.asks.iter().map(|l| l.price.0 / CENT).collect();
         assert_eq!(asks, vec![49, 50, 51]);
         assert_eq!(book.asks[0].qty, Qty(80), "quantities travel with their own level");
